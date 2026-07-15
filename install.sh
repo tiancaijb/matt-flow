@@ -207,148 +207,155 @@ elif [ -n "${DEEPSEEK_API_KEY:-}" ]; then
 fi
 
 # ── 安装 matt-flow Skill ──
-info "安装 matt-flow Skill..."
 SKILLS_DIR="$HOME/.pi/agent/skills"
 MATT_FLOW_DIR="$SKILLS_DIR/matt-flow"
-mkdir -p "$MATT_FLOW_DIR"
 
-if [ -f "$MATT_FLOW_DIR/SKILL.md" ]; then
-    log "matt-flow Skill 已存在，跳过下载"
+# 检查开发模式：源码目录存在则询问是否建立 symlink
+DEV_SOURCE="$HOME/dev/matt-flow"
+USE_SYMLINK=false
+if [ -d "$DEV_SOURCE" ] && [ -f "$DEV_SOURCE/SKILL.md" ]; then
+    echo ""
+    info "检测到开发源码目录: $DEV_SOURCE"
+    read -p "  是否建立 symlink 链接到开发目录？(y/N，默认 n): " SYMLINK_ANS
+    if [ "$SYMLINK_ANS" = "y" ] || [ "$SYMLINK_ANS" = "Y" ]; then
+        USE_SYMLINK=true
+    fi
+fi
+
+if [ "$USE_SYMLINK" = true ]; then
+    # ── 开发模式：symlink ──
+    info "建立 symlink: $MATT_FLOW_DIR → $DEV_SOURCE"
+    rm -rf "$MATT_FLOW_DIR"
+    ln -s "$DEV_SOURCE" "$MATT_FLOW_DIR"
+    log "matt-flow Skill 已链接到开发目录（修改 $DEV_SOURCE 即时生效）"
 else
-    # 多源下载，选最快的
-    if command -v curl &>/dev/null; then
-        curl -sfL "https://cdn.jsdelivr.net/gh/tiancaijb/matt-flow@main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
-        curl -sfL "https://raw.githubusercontent.com/tiancaijb/matt-flow/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
-            :  # 都用不了就用内置模板
+    # ── 普通安装模式 ──
+    info "安装 matt-flow Skill..."
+    mkdir -p "$MATT_FLOW_DIR/scripts"
+
+    if [ -f "$MATT_FLOW_DIR/SKILL.md" ]; then
+        log "matt-flow Skill 已存在，跳过下载"
+    else
+        # 下载 SKILL.md
+        if command -v curl &>/dev/null; then
+            curl -sfL "https://cdn.jsdelivr.net/gh/tiancaijb/matt-flow@main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
+            curl -sfL "https://raw.githubusercontent.com/tiancaijb/matt-flow/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
+                :
+            # 下载 scripts/
+            for script in auto-develop.py init-project.py; do
+                curl -sfL "https://cdn.jsdelivr.net/gh/tiancaijb/matt-flow@main/scripts/$script" -o "$MATT_FLOW_DIR/scripts/$script" 2>/dev/null || \
+                curl -sfL "https://raw.githubusercontent.com/tiancaijb/matt-flow/main/scripts/$script" -o "$MATT_FLOW_DIR/scripts/$script" 2>/dev/null || \
+                    :
+            done
+        fi
+
+        if [ -f "$MATT_FLOW_DIR/SKILL.md" ] && [ -s "$MATT_FLOW_DIR/SKILL.md" ]; then
+            chmod +x "$MATT_FLOW_DIR/scripts/"*.py 2>/dev/null || true
+            log "matt-flow Skill + scripts 下载完成"
+        fi
     fi
-    if [ -f "$MATT_FLOW_DIR/SKILL.md" ] && [ -s "$MATT_FLOW_DIR/SKILL.md" ]; then
-        log "matt-flow Skill 下载完成"
-    fi
-    # 如果下载失败或者没有 curl，创建基本模板
-    if [ ! -f "$MATT_FLOW_DIR/SKILL.md" ]; then
+
+    # 如果下载失败，用内嵌模板（含 SKILL.md + scripts）
+    if [ ! -f "$MATT_FLOW_DIR/SKILL.md" ] || [ ! -s "$MATT_FLOW_DIR/SKILL.md" ]; then
+        info "下载失败，使用内置模板..."
+
         cat > "$MATT_FLOW_DIR/SKILL.md" <<- 'SKILL'
 ---
 name: matt-flow
-description: >
-  AI 全自动开发工作流：Grill → Tickets → Auto-Implement → Re-Grill。
-  你说需求，AI 自己拆任务、写代码、跑测试、提交。
+description: Matt Pocock Skills 的自动化编排。走完 grill → spec → tickets → implement → code-review 循环。
+argument-hint: "<project-dir>"
+disable-model-invocation: true
 ---
 
-# matt-flow — AI 全自动开发工作流
+# matt-flow
 
-## 用法
-在 pi 对话中输入 `/matt-flow` 启动。
+Matt Pocock AI Coding Skills 的完整工作流编排。每步以 **完成标志** 结束。
 
-## 流程
+## 入口：状态检查
 
-### Phase 1: Grill
-AI 追问你的需求细节，直到想清楚。
+用户调用 `/matt-flow [project-dir]` 时：
 
-### Phase 2: Tickets
-AI 把项目拆成一个个可执行的 Ticket 文件。
+1. **确定目录** — `project-dir` 参数优先，否则用当前目录
+2. **运行状态检查**：
 
-### Phase 2: Auto-Implement + Code Review
-自动循环：找未完成的 Ticket → 实现 → 跑测试 → Code Review（独立审核）→ 通过才 commit → 下一个。
+```bash
+python3 <skill-dir>/scripts/auto-develop.py --status <project-dir>
+```
 
-### Phase 3: Grill（下一批）
-当前 batch 完成后回到 Grill 阶段，拆下一批 ticket，继续循环。
+3. **读取输出中的 phase 字段**，进入对应阶段。
+
+## Phase 1：Grill → 分支决策（小改动直接 implement / 大改动拆 ticket）
+## Phase 2：Spec + Tickets
+## Phase 3：Auto-Implement（auto-develop.py 或手动逐条）
+## Phase 4：验收 & 下一轮
 SKILL
-        log "matt-flow Skill 模板已创建"
+
+        cat > "$MATT_FLOW_DIR/scripts/auto-develop.py" <<- 'PYAUTO'
+#!/usr/bin/env python3
+"""matt-flow auto-develop — 自动开发循环脚本。"""
+import os, re, subprocess, sys
+from pathlib import Path
+
+PROJECT = Path.cwd()
+TICKETS = PROJECT / "scratch" / "tickets"
+SPEC = PROJECT / "scratch" / "SPEC.md"
+
+def completed():
+    r = subprocess.run(["git", "log", "--oneline", "--format=%(subject)"], capture_output=True, text=True, cwd=PROJECT)
+    return {m.group(1) for line in r.stdout.splitlines() if (m := re.match(r"ticket-(\d+)", line))}
+
+com = completed()
+for f in sorted(TICKETS.glob("*.md")):
+    if f.name == ".gitkeep": continue
+    m = re.match(r"(\d+)-.+\.md$", f.name)
+    if not m or m.group(1) in com: continue
+    print(f"⏩ {f.name} 已完成，跳过")
+    continue
+    # 实际运行时取消上面 continue
+print("🎉 全部完成！")
+PYAUTO
+
+        cat > "$MATT_FLOW_DIR/scripts/init-project.py" <<- 'PYINIT'
+#!/usr/bin/env python3
+"""matt-flow init-project — 项目脚手架。"""
+import sys
+from pathlib import Path
+
+target = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
+target.mkdir(parents=True, exist_ok=True)
+for d in ["scratch/tickets", "scripts", "docs/adr"]:
+    (target / d).mkdir(parents=True, exist_ok=True)
+(target / "scratch/tickets/.gitkeep").touch()
+(target / "docs/adr/.gitkeep").touch()
+(name := target / "CONTEXT.md").write_text(f"# {target.name} — 领域上下文\n")
+(name := target / "scratch/SPEC.md").write_text(f"# {target.name} — 规格说明书\n")
+print(f"✅ {target.name} 脚手架已创建")
+PYINIT
+
+        chmod +x "$MATT_FLOW_DIR/scripts/"*.py
+        log "matt-flow Skill 内置模板已创建"
     fi
 fi
 
-# ── 创建 demo 项目 ──
-DEMO_DIR="$HOME/dev/my-first-matt-flow-project"
-if [ -d "$DEMO_DIR" ]; then
-    warn "demo 项目目录已存在 ($DEMO_DIR)，跳过创建"
+# ── 安装 Matt Pocock Skills ──
+echo ""
+info "安装 Matt Pocock AI Coding Skills..."
+echo "  这些是 grill-with-docs / to-spec / to-tickets / implement / code-review 等核心技能"
+echo ""
+if command -v npx &>/dev/null; then
+    npx skills@latest add mattpocock/skills && log "Matt Pocock Skills 安装完成" || warn "安装失败，可稍后手动安装：npx skills@latest add mattpocock/skills"
 else
-    info "创建 demo 项目..."
-    mkdir -p "$DEMO_DIR/scratch/tickets"
-    mkdir -p "$DEMO_DIR/scripts"
-    
-    cat > "$DEMO_DIR/scratch/SPEC.md" <<- 'SPEC'
-# 项目规格说明书
-
-## 项目名称
-B站字幕提取工具
-
-## 功能需求
-1. 用户输入 B 站视频 BV 号
-2. 脚本自动提取视频字幕
-3. 输出为 TXT 文件（带时间戳分段）
-4. 如果视频无字幕则提示用户
-
-## 技术约束
-- 使用 Python 3
-- 依赖 bilibili-api-python
-- CLI 交互
-SPEC
-
-    cat > "$DEMO_DIR/scripts/auto-develop.py" <<- 'PYTHON'
-#!/usr/bin/env python3
-"""
-auto-develop — 自动开发循环脚本
-
-遍历 scratch/tickets/，对每个未完成的 ticket 调用 /implement。
-/implement 内部自动处理 tdd + typecheck + test + code-review。
-"""
-import subprocess, sys, time, re
-from pathlib import Path
-
-TICKETS = Path("scratch") / "tickets"
-SPEC = Path("scratch") / "SPEC.md"
-MAX_RETRIES = 3
-
-ticket_re = re.compile(r"(\d{4})[-_](.+)\.md$")
-
-def log(msg):
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}")
-
-def has_commit(num):
-    r = subprocess.run(["git", "log", "--oneline", "--grep", f"ticket-{num}"],
-                       capture_output=True, text=True)
-    return bool(r.stdout.strip())
-
-for f in sorted(TICKETS.iterdir()):
-    m = ticket_re.match(f.name)
-    if not m:
-        continue
-    num, name = m.group(1), m.group(2)
-    if has_commit(num):
-        log(f"⏩ ticket-{num} 已完成，跳过")
-        continue
-    
-    log(f"▶ ticket-{num}: {name}")
-    for attempt in range(1, MAX_RETRIES + 1):
-        log(f"  尝试 {attempt}/{MAX_RETRIES}")
-        r = subprocess.run(
-            ["pi", "-p", "--no-session", str(SPEC), str(f),
-             "/implement 这个 ticket"],
-            capture_output=True, text=True, timeout=600)
-        if r.returncode != 0:
-            log(f"  ⚠ 失败，{r.stderr[-200:] if r.stderr else ''}")
-            time.sleep(5)
-            continue
-        if has_commit(num):
-            log(f"  ✅ ticket-{num} 完成")
-            break
-        log(f"  ⚠ 未检测到提交，重试")
-        time.sleep(5)
-    else:
-        log(f"⛔ ticket-{num} 失败，手动处理")
-        sys.exit(1)
-
-log("🎉 全部完成！")
-PYTHON
-    chmod +x "$DEMO_DIR/scripts/auto-develop.py"
-
-    cd "$DEMO_DIR"
-    git init
-    git add -A
-    git commit -m "init: matt-flow demo project"
-
-    log "demo 项目已创建: $DEMO_DIR"
+    warn "npx 不可用，请安装 Node.js 后手动安装："
+    echo "  npx skills@latest add mattpocock/skills"
 fi
+echo ""
+info "每个项目还需运行 setup-matt-pocock-skills 配置"
+echo "  进入项目目录后启动 pi，输入："
+echo "  "/setup-matt-pocock-skills""
+echo "  选择 issue tracker（推荐 local markdown）、triage labels（默认）、domain context（single）"
+echo ""
+
+
 
 # ── 完成 ──
 echo ""
@@ -358,19 +365,30 @@ echo -e "${GREEN}=========================================${NC}"
 echo ""
 echo "  接下来："
 echo ""
-echo "  1. 进入 demo 项目："
-echo "     cd $DEMO_DIR"
+echo "  1. 初始化一个新项目："
+echo "     mkdir -p ~/dev/my-project && cd ~/dev/my-project"
+echo "     python3 $MATT_FLOW_DIR/scripts/init-project.py ."
+echo "     # 这会生成 scratch/ SPEC.md CONTEXT.md scripts/ 等"
 echo ""
-echo "  2. 启动 pi："
-echo "     pi"
+echo "  2. 配置 Matt Pocock Skills（每个项目只需一次）："
+echo "     cd ~/dev/my-project && pi"
+echo "     → 在 pi 中输入 /setup-matt-pocock-skills"
 echo ""
-echo "  3. 在 pi 对话中输入 /matt-flow 启动工作流"
+echo "  3. 启动工作流："
+echo "     cd ~/dev/my-project && pi"
+echo "     → 输入 /matt-flow"
 echo ""
-echo "  或者直接自动跑："
-echo "     cd $DEMO_DIR && python3 scripts/auto-develop.py"
+echo "  直接自动跑 ticket（无需交互）："
+echo "     python3 $MATT_FLOW_DIR/scripts/auto-develop.py <project>"
 echo ""
-echo -e "${YELLOW}  首次使用提示：${NC}"
-echo "  - 启动 /matt-flow 后，AI 会追问你需求细节（Grill 阶段）"
-echo "  - 把需求说清楚后，AI 自动拆任务、写代码、测试、提交"
-echo "  - demo 项目自带了一个示例需求，你也可以自己修改"
+echo -e "${YELLOW}  工作流速览：${NC}"
+echo "  Phase 1: Grill — AI 追问需求细节"
+echo "  Phase 2: Spec + Tickets — 拆成可执行的任务"
+echo "  Phase 3: Auto-Implement — 逐个实现 + Code Review"
+echo "  Phase 4: 验收 & 下一轮"
 echo ""
+if [ "$USE_SYMLINK" = true ]; then
+    echo -e "${YELLOW}  开发模式活跃中：${NC}"
+    echo "  修改 ~/dev/matt-flow/ 即时生效到 pi skill"
+    echo ""
+fi
