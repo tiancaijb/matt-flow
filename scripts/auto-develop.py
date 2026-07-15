@@ -482,23 +482,10 @@ def cmd_run(project: Path, resume: bool = False):
         print("🎉 没有待处理的 ticket")
         return
 
-    # Confirm (skip for resume / auto-yes)
+    # Confirm
     if not resume:
-        if sys.stdin.isatty():
-            # Interactive terminal — use input()
-            try:
-                reply = input("继续自动开发？(Y/n): ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                print("已取消")
-                sys.exit(0)
-            if reply and reply != "y" and reply != "yes" and reply != "":
-                print("已取消")
-                return
-        else:
-            # Non-interactive (CI / bash tool / pipe) — require -y flag
-            print("(非交互式终端，使用 --run -y 跳过确认)")
-            sys.exit(0)
+        print("使用 --run -y 跳过预估确认直接开跑")
+        sys.exit(0)
 
     failed_tickets = []
 
