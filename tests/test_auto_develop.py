@@ -24,6 +24,8 @@ _spec.loader.exec_module(_mod)
 _estimate_tokens = _mod._estimate_tokens
 _detect_project_type = _mod._detect_project_type
 _find_next_ticket = _mod._find_next_ticket
+cmd_status = _mod.cmd_status
+_verify_implementation = _mod._verify_implementation
 VerificationError = _mod.VerificationError
 
 
@@ -267,6 +269,105 @@ class TestFindNextTicket:
     def test_empty_tickets_dir_returns_none(self, tmp_path):
         """tickets 目录不存在 → None"""
         assert _find_next_ticket(tmp_path, set()) is None
+
+
+class TestCmdStatus:
+    """cmd_status() 状态检查测试 — project_type 字段集成"""
+
+    def _minimal_scratch(self, tmp_path: Path) -> None:
+        """Create minimal scratch/ structure that makes has_scratch=True."""
+        (tmp_path / "scratch").mkdir()
+        (tmp_path / "scratch" / "SPEC.md").write_text("# spec\n")
+        (tmp_path / "scratch" / "tickets").mkdir()
+
+    def test_has_project_type_key(self, tmp_path):
+        """state 始终包含 project_type 字段"""
+        state = cmd_status(tmp_path)
+        assert "project_type" in state
+
+    def test_project_type_with_scratch_python(self, tmp_path):
+        """有 scratch/ 时 project_type 反映项目类型 (python)"""
+        self._minimal_scratch(tmp_path)
+        (tmp_path / "pyproject.toml").write_text("[project]\n")
+        state = cmd_status(tmp_path)
+        assert state["project_type"] == "python"
+
+    def test_project_type_with_scratch_node(self, tmp_path):
+        """有 scratch/ 时 project_type 反映项目类型 (node)"""
+        self._minimal_scratch(tmp_path)
+        (tmp_path / "package.json").write_text('{"name": "test"}\n')
+        state = cmd_status(tmp_path)
+        assert state["project_type"] == "node"
+
+    def test_project_type_with_scratch_go(self, tmp_path):
+        """有 scratch/ 时 project_type 反映项目类型 (go)"""
+        self._minimal_scratch(tmp_path)
+        (tmp_path / "go.mod").write_text("module example\n")
+        state = cmd_status(tmp_path)
+        assert state["project_type"] == "go"
+
+    def test_project_type_with_scratch_rust(self, tmp_path):
+        """有 scratch/ 时 project_type 反映项目类型 (rust)"""
+        self._minimal_scratch(tmp_path)
+        (tmp_path / "Cargo.toml").write_text("[package]\n")
+        state = cmd_status(tmp_path)
+        assert state["project_type"] == "rust"
+
+    def test_project_type_with_scratch_unknown(self, tmp_path):
+        """有 scratch/ 但无标记文件时 project_type 为 unknown"""
+        self._minimal_scratch(tmp_path)
+        state = cmd_status(tmp_path)
+        assert state["project_type"] == "unknown"
+
+    def test_project_type_without_scratch(self, tmp_path):
+        """没有 scratch/ 时 project_type 固定为 unknown（即使有标记文件）"""
+        (tmp_path / "pyproject.toml").write_text("[project]\n")
+        state = cmd_status(tmp_path)
+        assert state["project_type"] == "unknown"
+
+    def test_project_type_does_not_require_git(self, tmp_path):
+        """无 git 仓库时 project_type 仍正常检测"""
+        self._minimal_scratch(tmp_path)
+        (tmp_path / "pyproject.toml").write_text("[project]\n")
+        state = cmd_status(tmp_path)
+        assert state["project_type"] == "python"
+        assert state["has_git"] is False
+
+
+class TestVerifyImplementation:
+    """_verify_implementation() 验证流程测试"""
+
+    @staticmethod
+    def _setup_python_project(tmp_path: Path) -> None:
+        """Create minimal python project structure for verification testing."""
+        (tmp_path / "pyproject.toml").write_text("[project]\n")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "__init__.py").write_text("")
+
+    def test_unknown_project_type_returns_empty(self, tmp_path):
+        """无项目类型时返回空列表（无验证步骤）"""
+        errors = _verify_implementation(tmp_path)
+        assert errors == []
+
+    def test_python_project_runs_pytest(self, tmp_path):
+        """Python 项目下运行 pytest 验证，测试通过返回空列表"""
+        self._setup_python_project(tmp_path)
+        (tmp_path / "tests" / "test_pass.py").write_text(
+            "def test_pass():\n    assert True\n"
+        )
+        errors = _verify_implementation(tmp_path)
+        assert errors == [], f"Expected no errors, got: {errors}"
+
+    def test_python_project_pytest_failure(self, tmp_path):
+        """Python 项目下 pytest 失败时返回 VerificationError"""
+        self._setup_python_project(tmp_path)
+        (tmp_path / "tests" / "test_fail.py").write_text(
+            "def test_fail():\n    assert False\n"
+        )
+        errors = _verify_implementation(tmp_path)
+        assert len(errors) > 0
+        assert errors[0].step == "Python 测试"
+        assert errors[0].exit_code != 0
 
 
 class TestVerificationError:
