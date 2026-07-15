@@ -156,7 +156,20 @@ status: archived
 每次实现 + 测试通过后，在 commit 之前，自动运行 Code Review。
 
 这不是一个独立阶段，而是嵌入在 Auto-Implement 循环中的一个步骤。
-详见下方 auto-develop.py 的流程。
+
+#### 执行流程
+
+```
+1. pi -p --no-session @SPEC @ticket "实现这个 ticket"
+2. 跑测试
+3. ✅ 测试通过 → 开独立的 pi（新上下文）跑 Code Review
+4.   ├─ Review PASS → git commit
+5.   └─ Review FAIL → 把 review 结果喂给独立的 pi 修复
+6.                     ├─ 修复后再次 Review → PASS → commit
+7.                     └─ 修复后仍不通过 → 重置重试（最多 3 次）
+```
+
+修复时只改 review 指出的问题，不是重写整个 ticket。
 
 ### Phase 3: Grill（下一批）
 

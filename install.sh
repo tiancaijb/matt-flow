@@ -297,41 +297,53 @@ def has_commit(num):
                        capture_output=True, text=True)
     return bool(r.stdout.strip())
 
-def code_review(ticket_path, num, name):
-    """在独立上下文中运行 Code Review，返回 True 表示通过。"""
-    log(f"  🔍 Code Review ticket-{num}...")
-    # 收集改动的文件列表
-    r = subprocess.run(["git", "diff", "--name-only", "--cached"],
-                       capture_output=True, text=True)
-    changed_files = r.stdout.strip() or "无暂存文件，检查工作区改动"
+def code_review(ticket_path, num, name, fix_mode=False):
+    """
+    在独立上下文中运行 Code Review。
+    返回 (passed: bool, details: str)。
+    fix_mode=True 时：不是审查，是按上一轮 review 的问题修代码。
+    """
+    log(f"  {'🔧 修复' if fix_mode else '🔍 Code Review'} ticket-{num}...")
     
-    review_prompt = (
-        f"Code Review 任务：ticket-{num} {name}\n\n"
-        f"改动的文件：\n{changed_files}\n\n"
-        f"请逐项检查：\n"
-        f"1. 实现是否满足 SPEC.md 中该 ticket 的验收标准\n"
-        f"2. 代码质量（类型安全、错误处理、命名规范）\n"
-        f"3. 边界情况和错误处理是否完善\n"
-        f"4. 无死代码、无 console.log 遗留、无 TODO\n\n"
-        f"如果有问题，列出每条问题的位置和严重级别（🔴 阻塞 / 🟡 次要）。\n"
-        f"如果全部通过，输出：PASS"
-    )
+    r = subprocess.run(["git", "diff", "--name-only"],
+                       capture_output=True, text=True)
+    changed_files = r.stdout.strip() or "无改动文件"
+    
+    if fix_mode:
+        prompt = (
+            f"修复任务：ticket-{num} {name}\n\n"
+            f"改动文件：\n{changed_files}\n\n"
+            f"上一轮 Code Review 发现的问题（需修复）：\n"
+            f"{fix_mode}\n\n"
+            f"请根据上述问题逐条修复代码。只修问题提到的地方，不要重写其他逻辑。"
+        )
+    else:
+        prompt = (
+            f"Code Review 任务：ticket-{num} {name}\n\n"
+            f"改动文件：\n{changed_files}\n\n"
+            f"请逐项检查：\n"
+            f"1. 实现是否满足 SPEC.md 中该 ticket 的验收标准\n"
+            f"2. 代码质量（类型安全、错误处理、命名规范）\n"
+            f"3. 边界情况和错误处理是否完善\n"
+            f"4. 无死代码、无 console.log 遗留、无 TODO\n\n"
+            f"发现问题 → 列出每条的位置和严重级别（🔴 阻塞 / 🟡 次要）\n"
+            f"全部通过 → 输出：PASS"
+        )
     
     r = subprocess.run(
         ["pi", "-p", "--no-session", str(SPEC), str(ticket_path)],
-        input=review_prompt, capture_output=True, text=True, timeout=300
+        input=prompt, capture_output=True, text=True, timeout=300
     )
     output = (r.stdout or "") + (r.stderr or "")
     
     if "PASS" in output and "🔴" not in output:
-        log(f"  ✅ Code Review 通过")
-        return True
+        log(f"  ✅ {'修复完成' if fix_mode else 'Code Review 通过'}")
+        return (True, output)
     else:
-        # 提取 review 摘要
         lines = output.strip().split("\n")
-        review_summary = "\n".join(lines[-5:])
-        log(f"  ⚠ Code Review 发现问题：\n{review_summary}")
-        return False
+        summary = "\n".join(lines[-8:])
+        log(f"  ⚠ {'修复不完整' if fix_mode else 'Code Review 发现问题'}：\n{summary}")
+        return (False, output)
 
 for f in sorted(TICKETS.iterdir()):
     m = ticket_re.match(f.name)
@@ -341,6 +353,7 @@ for f in sorted(TICKETS.iterdir()):
     if has_commit(num):
         log(f"⏩ ticket-{num} 已完成，跳过")
         continue
+    
     log(f"▶ 实现 ticket-{num}: {name}")
     for attempt in range(1, MAX_RETRIES + 1):
         log(f"  尝试 {attempt}/{MAX_RETRIES}")
@@ -361,16 +374,25 @@ for f in sorted(TICKETS.iterdir()):
         
         subprocess.run(["git", "add", "-A"])
         
-        # Code Review：用独立的 pi 调用，新上下文
-        if not code_review(f, num, name):
-            log(f"  ⚠ Code Review 未通过，重试")
-            subprocess.run(["git", "reset", "HEAD"])
-            time.sleep(5)
-            continue
+        # Code Review（独立上下文）
+        passed, review_output = code_review(f, num, name)
+        if passed:
+            subprocess.run(["git", "commit", "-m", f"ticket-{num}: {name}"])
+            log(f"  ✅ ticket-{num} 完成")
+            break
         
-        subprocess.run(["git", "commit", "-m", f"ticket-{num}: {name}"])
-        log(f"  ✅ ticket-{num} 完成")
-        break
+        # Review 发现问题 → 修，不重写
+        log(f"  ⚠ 按 review 结果修复...")
+        passed, _ = code_review(f, num, name, fix_mode=review_output)
+        if passed:
+            subprocess.run(["git", "commit", "-m", f"ticket-{num}: {name}"])
+            log(f"  ✅ ticket-{num} 完成（修复后）")
+            break
+        
+        # 修复后 review 仍不通过 → 重置重试
+        log(f"  ⚠ 修复不通过，重置重试 ({attempt}/{MAX_RETRIES})")
+        subprocess.run(["git", "reset", "HEAD", "--hard"])
+        time.sleep(5)
     else:
         log(f"⛔ ticket-{num} 失败，手动处理")
         sys.exit(1)
