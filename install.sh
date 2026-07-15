@@ -4,7 +4,10 @@ set -euo pipefail
 # ============================================================
 #  matt-flow 一键安装脚本
 #  让 AI 自己写代码的自动化开发流水线
-#  用法：curl -fsSL https://raw.githubusercontent.com/tiancaijb/matt-flow/main/install.sh | bash
+#
+#  用法：
+#    curl -fsSL https://raw.githubusercontent.com/tiancaijb/matt-flow/main/install.sh | bash
+#    （如果 GitHub 打不开，手动下载 install.sh 后执行 bash install.sh）
 # ============================================================
 
 RED='\033[0;31m'
@@ -77,22 +80,28 @@ esac
 
 # ── 检测 Node.js ──
 info "检查 Node.js..."
+NPM_REGISTRY="--registry=https://registry.npmmirror.com"
 if command -v node &>/dev/null; then
     NODE_VERSION=$(node -v | sed 's/v//' | cut -d. -f1)
     if [ "$NODE_VERSION" -ge 18 ]; then
         log "Node.js $(node -v) 已安装"
     else
         warn "Node.js 版本过低 ($(node -v))，需要 v18+"
-        info "推荐用 nvm 安装最新 LTS："
-        info "  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash"
-        info "  nvm install --lts"
+        err "请升级 Node.js 到 v18+ 后重试"
+        err "  nvm install --lts"
         exit 1
     fi
 else
     warn "未检测到 Node.js"
-    info "正在通过 nvm 安装 Node.js LTS..."
+    info "正在安装 Node.js LTS..."
     if command -v curl &>/dev/null; then
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
+        # 优先用 Gitee 镜像（国内快），GitHub 兜底
+        NVM_INSTALL_URL="https://gitee.com/mirrors/nvm/raw/master/install.sh"
+        curl -sfL "$NVM_INSTALL_URL" -o /tmp/install-nvm.sh 2>/dev/null || {
+            NVM_INSTALL_URL="https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh"
+            curl -sfL "$NVM_INSTALL_URL" -o /tmp/install-nvm.sh
+        }
+        bash /tmp/install-nvm.sh
         export NVM_DIR="$HOME/.nvm"
         [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
         nvm install --lts
@@ -100,8 +109,6 @@ else
         log "Node.js $(node -v) 安装完成"
     else
         err "请先安装 curl，然后重新运行本脚本"
-        err "  Ubuntu/Debian: sudo apt install curl"
-        err "  macOS: 自带 curl"
         exit 1
     fi
 fi
@@ -111,6 +118,8 @@ info "安装 pi (AI Agent 框架)..."
 if command -v pi &>/dev/null; then
     log "pi 已安装 ($(pi --version 2>/dev/null || echo '版本未知'))"
 else
+    # 先试试国内镜像，再试默认源
+    npm install -g @earendil-works/pi-coding-agent $NPM_REGISTRY 2>/dev/null || \
     npm install -g @earendil-works/pi-coding-agent 2>/dev/null || {
         warn "npm 安装失败，尝试用 npx..."
         npx -y @earendil-works/pi-coding-agent --version &>/dev/null
@@ -118,7 +127,8 @@ else
     if command -v pi &>/dev/null; then
         log "pi 安装完成"
     else
-        err "pi 安装失败，请手动运行：npm install -g @earendil-works/pi-coding-agent"
+        err "pi 安装失败，请手动运行："
+        err "  npm install -g @earendil-works/pi-coding-agent --registry=https://registry.npmmirror.com"
         exit 1
     fi
 fi
@@ -229,11 +239,14 @@ mkdir -p "$MATT_FLOW_DIR"
 if [ -f "$MATT_FLOW_DIR/SKILL.md" ]; then
     log "matt-flow Skill 已存在，跳过下载"
 else
-    # 从 GitHub 下载（如果不可达则用本地模板）
+    # 从 GitHub 下载，Gitee 镜像兜底
     if command -v curl &>/dev/null; then
-        curl -sfL "https://raw.githubusercontent.com/tiancaijb/matt-flow/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null && \
-            log "matt-flow Skill 下载完成" || \
+        curl -sfL "https://gitee.com/tiancaijb/matt-flow/raw/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
+        curl -sfL "https://raw.githubusercontent.com/tiancaijb/matt-flow/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
             warn "下载失败，使用内置模板"
+    fi
+    if [ -f "$MATT_FLOW_DIR/SKILL.md" ] && [ -s "$MATT_FLOW_DIR/SKILL.md" ]; then
+        log "matt-flow Skill 下载完成"
     fi
     # 如果下载失败或者没有 curl，创建基本模板
     if [ ! -f "$MATT_FLOW_DIR/SKILL.md" ]; then
