@@ -237,11 +237,11 @@ AI 追问你的需求细节，直到想清楚。
 ### Phase 2: Tickets
 AI 把项目拆成一个个可执行的 Ticket 文件。
 
-### Phase 3: Auto-Implement
-自动循环：找未完成的 Ticket → 实现 → 跑测试 → 下一个。
+### Phase 2: Auto-Implement + Code Review
+自动循环：找未完成的 Ticket → 实现 → 跑测试 → Code Review（独立审核）→ 通过才 commit → 下一个。
 
-### Phase 4: Code Review
-每次实现后自动跑 Code Review（独立审核，对比 Spec 和代码标准），审核通过才 commit。
+### Phase 3: Grill（下一批）
+当前 batch 完成后回到 Grill 阶段，拆下一批 ticket，继续循环。
 SKILL
         log "matt-flow Skill 模板已创建"
     fi
