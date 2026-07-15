@@ -25,7 +25,7 @@ python3 <skill-dir>/scripts/auto-develop.py --status <project-dir>
 | phase | 含义 | 下一步 |
 |-------|------|--------|
 | `init` | 新项目，无 git / 无 scratch | 问用户是否 `init-project.py` 初始化 |
-| `grill` | 无 tickets，需从需求开始 | **Phase 1** |
+| `grill` | 无 tickets，需从需求开始 | 问用户是否先调 `/ask-matt` → 或直接 **Phase 1** |
 | `implement` | 有 tickets 未完成 | **Phase 3** |
 | `review` | 所有 ticket 已完成 | **Phase 4** |
 
@@ -114,7 +114,9 @@ python3 <skill-dir>/scripts/auto-develop.py <project-dir>
 
 1. 向用户展示当前 batch 的成果
 2. 如有失败 ticket，讨论修复方案
-3. 问用户：**继续下一批（回到 Phase 1）还是结束？**
+3. 问用户：**继续下一批还是结束？**
+   - 继续 → 调 `/ask-matt` 获取下一批的方向建议，展示给用户，回到 **Phase 1**
+   - 结束 → 完成
 
 **完成标志**：用户确认结束，或继续下一轮 Grill。
 
