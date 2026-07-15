@@ -11,16 +11,13 @@ Matt Pocock AI Coding Skills 的完整工作流编排。每步以 **完成标志
 
 ## 入口：状态检查
 
-用户调用 `/matt-flow [project-dir]` 时：
-
-1. **确定目录** — `project-dir` 参数优先，否则用当前目录
-2. **运行状态检查**：
+用户调用 `/matt-flow [project-dir]` 时运行状态检查：
 
 ```bash
 python3 <skill-dir>/scripts/auto-develop.py --status <project-dir>
 ```
 
-3. **读取输出中的 phase 字段**，进入对应阶段：
+从输出中提取 `phase` 字段，进入对应阶段：
 
 | phase | 含义 | 下一步 |
 |-------|------|--------|
@@ -64,11 +61,9 @@ python3 <skill-dir>/scripts/auto-develop.py --status <project-dir>
 
 ### 步骤 4：to-tickets
 
-调用 `/to-tickets`，将 spec 拆成多个 ticket。
+调用 `/to-tickets`，将 spec 拆成多个 ticket，每个 ≈ 一个 context window（~100K tokens）。输出到 `scratch/tickets/NNNN-name.md`。
 
-**每条 ticket 是一个 context window**（~100K tokens），确保 AI 在智能区内工作。输出到 `scratch/tickets/NNNN-name.md`。
-
-**完成标志**：`scratch/tickets/` 下有 `.md` 文件，且每个 ticket ≈ 一个 context window。
+**完成标志**：`scratch/tickets/` 下有 `.md` 文件。
 
 ---
 
@@ -95,17 +90,16 @@ python3 <skill-dir>/scripts/auto-develop.py <project-dir>
 
 ### 路径 B：手动（逐条实现）
 
-当自动脚本不适用时，逐条执行：
+自动脚本不适用时，逐条执行：
 
-1. **清空 agent context**
-2. 加载 Spec + Ticket：
+1. 加载 Spec + Ticket：
    ```
    @scratch/SPEC.md @scratch/tickets/NNNN-name.md
    实现这个 ticket，严格按照 SPEC.md 和 ticket 中的要求执行
    ```
-3. 实现完成后，agent 自动包含 **Code Review**（sub-agent 双轴审查：对照 Spec + 对照代码标准）
-4. 验证通过 → `git add -A && git commit -m "ticket-NNNN: name"`
-5. 清空 context → 重复直到所有 ticket 完成
+2. 实现完成后，agent 自动包含 **Code Review**（sub-agent 双轴审查：对照 Spec + 对照代码标准）
+3. 验证通过 → `git add -A && git commit -m "ticket-NNNN: name"`
+4. 清空上下文，进入下一条 ticket
 
 **完成标志**：所有 ticket 文件对应的 `ticket-NNNN` 提交出现在 git log 中。
 
@@ -125,9 +119,9 @@ python3 <skill-dir>/scripts/auto-develop.py <project-dir>
 
 ## 原则
 
-- **一次只 grill 当前阶段** — 不必拆完所有 ticket 才开跑
+- **一次只 grill 当前阶段** — 拆完一个即可开跑下一个
 - **git log 判定进度** — 已提交的 ticket 自动跳过
-- **ticket = 一个 context window** — ~100K tokens，保证 AI 质量
-- **每次 ticket 后清空 context** — 避免上下文污染（手动路径关键）
-- **失败通知人** — 重试 3 次仍失败就停，等人处理
-- **文件即记忆** — spec 和 tickets 在文件里，跨 session 恢复
+- **每个 ticket ≈ 一个 context window（~100K tokens）** — 确保 AI 输出质量
+- **每次 ticket 后清空上下文** — 保持上下文清洁（手动路径关键）
+- **失败通知人** — 重试 3 次仍失败则暂停，等人处理
+- **文件即记忆** — spec 和 tickets 存于文件，跨 session 可恢复
