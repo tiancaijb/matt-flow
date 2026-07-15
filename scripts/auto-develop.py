@@ -8,6 +8,7 @@ matt-flow auto-develop
   python3 <skill-dir>/scripts/auto-develop.py --status <project-dir>     检查项目状态
   python3 <skill-dir>/scripts/auto-develop.py --next <project-dir>       显示下一个未完成的 ticket
   python3 <skill-dir>/scripts/auto-develop.py --run <project-dir>        自动实现（失败即退出）
+  python3 <skill-dir>/scripts/auto-develop.py --run -y <project-dir>     跳过时间预估确认直接开跑
   python3 <skill-dir>/scripts/auto-develop.py --resume <project-dir>    自动实现（失败跳过，继续下一个）
   python3 <skill-dir>/scripts/auto-develop.py <project-dir>              等价于 --run
 """
@@ -100,13 +101,15 @@ def _git_porcelain(project: Path) -> bool:
 
 def _get_completed_tickets(project: Path) -> set[str]:
     """Check git log for already committed tickets.
-    Returns set of 'tid:name' keys like '0001:token-estimation'.
+    Returns set of ticket IDs like '0001', '0002', etc.
+    Only matches on the ticket-NNNN prefix, ignoring the descriptive text
+    (which may use spaces/hyphens differently than filenames).
     """
     completed = set()
     for line in _git_log(project):
-        m = re.match(r"ticket-(\d+): (.+)$", line)
+        m = re.match(r"ticket-(\d+):", line)
         if m:
-            completed.add(f"{m.group(1)}:{m.group(2)}")
+            completed.add(m.group(1))
     return completed
 
 
@@ -131,13 +134,11 @@ def _find_next_ticket(
 ) -> Optional[tuple[str, Path]]:
     """Find the first uncompleted ticket (skips archived/skipped ones)."""
     for tid, path in _get_ticket_files(project):
-        ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
-        key = f"{tid}:{ticket_name}"
-        if key in completed:
+        if tid in completed:
             continue
         content = path.read_text()
         if "status: archived" in content or "status: skipped" in content:
-            completed.add(key)
+            completed.add(tid)
             continue
         return (tid, path)
     return None
@@ -179,13 +180,11 @@ def cmd_status(project: Path) -> dict:
     # Match completed keys against current ticket files
     completed = set()
     for tid, path in all_tickets:
-        ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
-        key = f"{tid}:{ticket_name}"
-        if key in all_keys:
-            completed.add(key)
+        if tid in all_keys:
+            completed.add(tid)
         content = path.read_text()
         if "status: archived" in content or "status: skipped" in content:
-            skipped.add(key)
+            skipped.add(tid)
 
     state["total_tickets"] = len(all_tickets)
     state["completed_tickets"] = len(completed)
@@ -272,15 +271,13 @@ def print_status(state: dict):
         print(f"  {last_err}")
         print()
 
-    # Ticket detail with token estimates
+    # Ticket detail with token estimates and time estimates
     if state["total_tickets"] > 0:
-        completed = _get_completed_tickets(Path(state["project"]))
+        completed_ids = _get_completed_tickets(Path(state["project"]))
         ticket_details = []
         for tid, path in _get_ticket_files(Path(state["project"])):
-            ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
-            key = f"{tid}:{ticket_name}"
             content = path.read_text()
-            if key in completed:
+            if tid in completed_ids:
                 status = "DONE"
             elif "status: archived" in content or "status: skipped" in content:
                 status = "SKIPPED"
@@ -294,10 +291,17 @@ def print_status(state: dict):
             elif tokens > TOKEN_WARN:
                 token_tag = " ⚠ OVERSIZED (>100K)"
             
-            ticket_details.append((path.name, status, tokens, token_tag))
+            ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
+            type_name, weight = _detect_ticket_type(ticket_name)
+            est_sec = _estimate_ticket_time(tokens, weight)
+            
+            ticket_details.append((path.name, status, tokens, token_tag, type_name, est_sec))
         
-        for name, st, tokens, tag in ticket_details:
-            print(f"  {name} → {st}  ({tokens} tokens){tag}")
+        for name, st, tokens, tag, ttype, est in ticket_details:
+            if st == "PENDING":
+                print(f"  {name} → {st}  ({tokens} tokens, {ttype}, ~{_format_duration(est)}){tag}")
+            else:
+                print(f"  {name} → {st}  ({tokens} tokens){tag}")
         print()
     else:
         print("  (no tickets yet)")
@@ -340,6 +344,92 @@ def cmd_next(project: Path):
     print(path.read_text())
 
 
+# ── 时间预估 ─────────────────────────────────────────────
+
+# Ticket 类型检测关键词（按文件名匹配）
+_TICKET_TYPES: list[tuple[list[str], str, float]] = [
+    (["test", "vitest"], "测试", 1.0),
+    (["eslint", "config", "ci", "cd", "dependabot", "bump", "release", "workflow"], "配置/CI", 0.8),
+    (["doc", "readme", "changelog", "contribut", "architecture", "license"], "文档", 0.7),
+    (["perf", "optimize", "cache", "lazy", "render", "refresh", "debounce", "scan"], "性能", 1.3),
+    (["refactor", "clean", "split", "extract"], "重构", 1.1),
+]
+
+# Token 量级 → 基础耗时（秒）
+_BASE_ESTIMATE_TIERS: list[tuple[int, int]] = [
+    (300, 180),     # < 300 tokens: 3 min
+    (600, 240),     # < 600 tokens: 4 min
+    (1000, 300),    # < 1000 tokens: 5 min
+]
+
+def _detect_ticket_type(ticket_name: str) -> tuple[str, float]:
+    """Detect ticket type from filename. Returns (type_label, weight)."""
+    name_lower = ticket_name.lower()
+    for keywords, type_name, weight in _TICKET_TYPES:
+        for kw in keywords:
+            if kw in name_lower:
+                return type_name, weight
+    return "代码", 1.0
+
+
+def _estimate_ticket_time(tokens: int, type_weight: float) -> int:
+    """Estimate time in seconds for a single ticket."""
+    for threshold, base_sec in _BASE_ESTIMATE_TIERS:
+        if tokens < threshold:
+            return max(60, int(base_sec * type_weight))
+    return max(60, int(420 * type_weight))
+
+
+def _format_duration(total_sec: int) -> str:
+    """Format seconds to human readable duration string."""
+    if total_sec >= 3600:
+        h = total_sec // 3600
+        m = (total_sec % 3600) // 60
+        return f"{h}h{m}min" if m else f"{h}h"
+    elif total_sec >= 120:
+        return f"{total_sec // 60}min"
+    elif total_sec >= 60:
+        return f"1min"
+    else:
+        return f"{total_sec}s"
+
+
+def _show_estimate(project: Path, completed: set[str]) -> int:
+    """Display estimate table for pending tickets. Returns total estimate in seconds."""
+    spec_path = project / "scratch" / "SPEC.md"
+    spec_text = spec_path.read_text() if spec_path.exists() else ""
+    spec_tokens = _estimate_tokens(spec_text)
+
+    pending = []
+    total_sec = 0
+    for tid, path in _get_ticket_files(project):
+        if tid in completed:
+            continue
+        content = path.read_text()
+        if "status: archived" in content or "status: skipped" in content:
+            continue
+        tokens = _estimate_tokens(content) + spec_tokens
+        ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
+        type_name, weight = _detect_ticket_type(ticket_name)
+        est_sec = _estimate_ticket_time(tokens, weight)
+        total_sec += est_sec
+        pending.append((tid, ticket_name, type_name, tokens, est_sec))
+
+    if not pending:
+        return 0
+
+    print()
+    print(f"📊 本轮预估 ({len(pending)} tickets):")
+    print(f"  {'ticket':<8} {'类型':<10} {'tokens':<8} 预估耗时")
+    print(f"  {'-'*8} {'-'*10} {'-'*8} {'-'*8}")
+    for tid, name, ttype, tokens, est in pending:
+        print(f"  {tid:<8} {ttype:<10} {tokens:<8} {_format_duration(est)}")
+    print(f"  {'-'*8} {'-'*10} {'-'*8} {'-'*8}")
+    print(f"  {'':<8} {'':<10} {'合计':<8} {_format_duration(total_sec)}")
+    print()
+    return total_sec
+
+
 # ── 自动实现循环 ─────────────────────────────────────────
 
 def _check_ticket_sizes(project: Path, completed: set[str]):
@@ -349,9 +439,7 @@ def _check_ticket_sizes(project: Path, completed: set[str]):
     spec_tokens = _estimate_tokens(spec_text)
 
     for tid, path in _get_ticket_files(project):
-        ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
-        key = f"{tid}:{ticket_name}"
-        if key in completed:
+        if tid in completed:
             continue
         content = path.read_text()
         total = _estimate_tokens(content) + spec_tokens
@@ -387,6 +475,30 @@ def cmd_run(project: Path, resume: bool = False):
 
     # Pre-check: warn on oversized tickets
     _check_ticket_sizes(project, completed)
+
+    # Estimate (always show)
+    total_est = _show_estimate(project, completed)
+    if total_est == 0:
+        print("🎉 没有待处理的 ticket")
+        return
+
+    # Confirm (skip for resume / auto-yes)
+    if not resume:
+        if sys.stdin.isatty():
+            # Interactive terminal — use input()
+            try:
+                reply = input("继续自动开发？(Y/n): ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                print("已取消")
+                sys.exit(0)
+            if reply and reply != "y" and reply != "yes" and reply != "":
+                print("已取消")
+                return
+        else:
+            # Non-interactive (CI / bash tool / pipe) — require -y flag
+            print("(非交互式终端，使用 --run -y 跳过确认)")
+            sys.exit(0)
 
     failed_tickets = []
 
@@ -432,8 +544,7 @@ def cmd_run(project: Path, resume: bool = False):
             # ── Commit ──
             _clear_last_error(project)
             _commit_ticket(tid, path)
-            ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
-            completed.add(f"{tid}:{ticket_name}")
+            completed.add(tid)
             print(f"✅ ticket-{tid} 已提交")
             break
         else:
@@ -614,6 +725,7 @@ def main():
         sys.exit(0)
 
     mode = "run"
+    auto_yes = False
     arg_idx = 1
 
     if sys.argv[1] == "--status":
@@ -623,6 +735,15 @@ def main():
         mode = "next"
         arg_idx = 2
     elif sys.argv[1] == "--run":
+        mode = "run"
+        arg_idx = 2
+        # Check for -y after --run
+        if len(sys.argv) > 2 and sys.argv[2] == "-y":
+            auto_yes = True
+            arg_idx = 3
+    elif sys.argv[1] == "-y":
+        # -y before --run
+        auto_yes = True
         mode = "run"
         arg_idx = 2
     elif sys.argv[1] == "--resume":
@@ -647,7 +768,7 @@ def main():
     elif mode == "resume":
         cmd_run(project, resume=True)
     else:  # run
-        cmd_run(project)
+        cmd_run(project, resume=auto_yes)   # -y mode skips confirmation but not failures
 
 
 if __name__ == "__main__":
