@@ -1,0 +1,8 @@
+[project]
+name = "matt-flow"
+description = "matt-flow — AI-assisted development workflow"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["scripts"]
