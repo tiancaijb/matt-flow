@@ -7,7 +7,7 @@ set -euo pipefail
 #
 #  用法：
 #    curl -fsSL https://raw.githubusercontent.com/tiancaijb/matt-flow/main/install.sh | bash
-#    （如果 GitHub 打不开，手动下载 install.sh 后执行 bash install.sh）
+#    curl -fsSL https://cdn.jsdelivr.net/gh/tiancaijb/matt-flow@main/install.sh | bash
 # ============================================================
 
 RED='\033[0;31m'
@@ -146,35 +146,57 @@ fi
 
 if [ "$HAS_KEY" = false ]; then
     echo ""
-    echo "  需要一个大模型 API Key 才能使用。推荐 DeepSeek（国内友好，注册送额度）："
+    echo "  选择一个 API Key 提供商："
     echo ""
+    echo "    1) DeepSeek 官方（推荐新手，¥2/百万 token，注册送额度）"
+    echo "    2) OpenCode Go 订阅（推荐重度用户，DeepSeek-V4-Flash 不限量）"
+    echo ""
+    read -p "  输入选项 (1/2，默认 1): " API_CHOICE
+    API_CHOICE="${API_CHOICE:-1}"
     
-    # 自动打开 DeepSeek 注册页面
-    DEEPSEEK_URL="https://platform.deepseek.com/"
-    echo -n "  → 正在打开 DeepSeek 注册页面..."
-    (xdg-open "$DEEPSEEK_URL" 2>/dev/null || open "$DEEPSEEK_URL" 2>/dev/null || echo -n "（无法自动打开）")
-    echo ""
-    echo "    如果浏览器没自动打开，请访问："
-    echo "    $DEEPSEEK_URL"
-    echo ""
-    echo "    注册后点击「API Keys」创建，复制以 sk- 开头的 key 粘贴到下面："
-    echo ""
-    read -p "  粘贴 DeepSeek API Key (留空则跳过): " DS_KEY
+    SHELL_PROFILE="$HOME/.bashrc"
+    [ -f "$HOME/.zshrc" ] && SHELL_PROFILE="$HOME/.zshrc"
     
-    if [ -n "$DS_KEY" ]; then
-        SHELL_PROFILE="$HOME/.bashrc"
-        [ -f "$HOME/.zshrc" ] && SHELL_PROFILE="$HOME/.zshrc"
-        echo "" >> "$SHELL_PROFILE"
-        echo "# matt-flow: DeepSeek API Key" >> "$SHELL_PROFILE"
-        echo "export DEEPSEEK_API_KEY=$DS_KEY" >> "$SHELL_PROFILE"
-        export DEEPSEEK_API_KEY="$DS_KEY"
-        log "DEEPSEEK_API_KEY 已保存"
-    else
-        warn "未配置 API Key，稍后可以手动设置"
-        echo ""
-        echo "  手动设置方法："
-        echo "    export DEEPSEEK_API_KEY=sk-your-key-here"
-        echo "    echo 'export DEEPSEEK_API_KEY=sk-your-key-here' >> ~/.bashrc"
+    case "$API_CHOICE" in
+        2)
+            OPENCODE_URL="https://opencode.com/go"
+            echo ""
+            echo "  → 正在打开 OpenCode Go 页面..."
+            (xdg-open "$OPENCODE_URL" 2>/dev/null || open "$OPENCODE_URL" 2>/dev/null || true)
+            echo "    如果浏览器没打开，请访问：$OPENCODE_URL"
+            echo ""
+            read -p "  粘贴 OpenCode API Key: " OC_KEY
+            if [ -n "$OC_KEY" ]; then
+                echo "" >> "$SHELL_PROFILE"
+                echo "# matt-flow: OpenCode API Key" >> "$SHELL_PROFILE"
+                echo "export OPENCODE_API_KEY=$OC_KEY" >> "$SHELL_PROFILE"
+                export OPENCODE_API_KEY="$OC_KEY"
+                log "OPENCODE_API_KEY 已保存，使用模型: opencode/deepseek-v4-flash"
+            fi
+            ;;
+        1|*)
+            DEEPSEEK_URL="https://platform.deepseek.com/"
+            echo ""
+            echo "  → 正在打开 DeepSeek 注册页面..."
+            (xdg-open "$DEEPSEEK_URL" 2>/dev/null || open "$DEEPSEEK_URL" 2>/dev/null || true)
+            echo "    如果浏览器没打开，请访问：$DEEPSEEK_URL"
+            echo "    注册后点击「API Keys」创建，复制 sk- 开头的 key 粘贴到下面："
+            echo ""
+            read -p "  粘贴 DeepSeek API Key: " DS_KEY
+            if [ -n "$DS_KEY" ]; then
+                echo "" >> "$SHELL_PROFILE"
+                echo "# matt-flow: DeepSeek API Key" >> "$SHELL_PROFILE"
+                echo "export DEEPSEEK_API_KEY=$DS_KEY" >> "$SHELL_PROFILE"
+                export DEEPSEEK_API_KEY="$DS_KEY"
+                log "DEEPSEEK_API_KEY 已保存，使用模型: deepseek/deepseek-chat"
+            fi
+            ;;
+    esac
+    
+    # 如果没填 key，给提示
+    if [ -z "${DEEPSEEK_API_KEY:-}" ] && [ -z "${OPENCODE_API_KEY:-}" ]; then
+        warn "未配置 API Key，后面可以手动设置"
+        echo "  手动设置：export DEEPSEEK_API_KEY=sk-xxx"
     fi
 fi
 
@@ -193,11 +215,11 @@ mkdir -p "$MATT_FLOW_DIR"
 if [ -f "$MATT_FLOW_DIR/SKILL.md" ]; then
     log "matt-flow Skill 已存在，跳过下载"
 else
-    # 从 GitHub 下载，Gitee 镜像兜底
+    # 多源下载，选最快的
     if command -v curl &>/dev/null; then
-        curl -sfL "https://gitee.com/tiancaijb/matt-flow/raw/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
+        curl -sfL "https://cdn.jsdelivr.net/gh/tiancaijb/matt-flow@main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
         curl -sfL "https://raw.githubusercontent.com/tiancaijb/matt-flow/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null || \
-            warn "下载失败，使用内置模板"
+            :  # 都用不了就用内置模板
     fi
     if [ -f "$MATT_FLOW_DIR/SKILL.md" ] && [ -s "$MATT_FLOW_DIR/SKILL.md" ]; then
         log "matt-flow Skill 下载完成"
