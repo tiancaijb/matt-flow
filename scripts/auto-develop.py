@@ -598,7 +598,18 @@ def _verify_implementation(project: Path) -> list:
                 stderr = "\n".join(lines[:3]) + f"\n  (... {len(lines)-3} more lines)"
             errors.append(VerificationError(step_name, result.returncode, stderr))
 
-    verifiers = _LANG_VERIFIERS.get(ptype, [])
+    # Dynamic verifier list (may be adjusted per project)
+    verifiers = list(_LANG_VERIFIERS.get(ptype, []))
+
+    # For Node.js, use tsconfig.build.json if it exists (excludes tests from type check)
+    if ptype == "node" and (project / "tsconfig.build.json").exists():
+        verifiers = [
+            (name, ["npx", "tsc", "-p", "tsconfig.build.json", "--noEmit"])
+            if name == "TypeScript 类型检查"
+            else (name, cmd)
+            for name, cmd in verifiers
+        ]
+
     for step_name, cmd in verifiers:
         _run_step(step_name, cmd)
 
