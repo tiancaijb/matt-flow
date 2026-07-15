@@ -19,6 +19,20 @@ from typing import Optional
 
 MAX_RETRIES = 3
 
+# ── Token 估算（tiktoken 优先，回退到字符估算）──
+try:
+    import tiktoken
+    _TOKENIZER = tiktoken.get_encoding("cl100k_base")
+    def _estimate_tokens(text: str) -> int:
+        return len(_TOKENIZER.encode(text))
+except Exception:
+    _TOKENIZER = None
+    def _estimate_tokens(text: str) -> int:
+        return int(len(text) / 3.5)
+
+TOKEN_WARN = 100_000  # 警告阈值
+TOKEN_LIMIT = 140_000  # 智能区上限
+
 
 # ── 辅助函数 ─────────────────────────────────────────────
 
@@ -194,9 +208,10 @@ def print_status(state: dict):
         print(f"  下一个: (无)")
     print()
 
-    # Ticket detail
+    # Ticket detail with token estimates
     if state["total_tickets"] > 0:
         completed = _get_completed_tickets(Path(state["project"]))
+        ticket_details = []
         for tid, path in _get_ticket_files(Path(state["project"])):
             content = path.read_text()
             if tid in completed:
@@ -205,8 +220,21 @@ def print_status(state: dict):
                 status = "SKIPPED"
             else:
                 status = "PENDING"
-            print(f"  {path.name} → {status}")
+            
+            tokens = _estimate_tokens(content)
+            token_tag = ""
+            if tokens > TOKEN_LIMIT:
+                token_tag = " ⚠ OVER-LIMIT (>140K)"
+            elif tokens > TOKEN_WARN:
+                token_tag = " ⚠ OVERSIZED (>100K)"
+            
+            ticket_details.append((path.name, status, tokens, token_tag))
+        
+        for name, st, tokens, tag in ticket_details:
+            print(f"  {name} → {st}  ({tokens} tokens){tag}")
         print()
+    else:
+        print("  (no tickets yet)")
 
     # Guidance
     guidance = {
@@ -248,6 +276,24 @@ def cmd_next(project: Path):
 
 # ── 自动实现循环 ─────────────────────────────────────────
 
+def _check_ticket_sizes(project: Path, completed: set[str]):
+    """Warn on tickets that exceed size thresholds."""
+    spec_path = project / "scratch" / "SPEC.md"
+    spec_text = spec_path.read_text() if spec_path.exists() else ""
+    spec_tokens = _estimate_tokens(spec_text)
+
+    for tid, path in _get_ticket_files(project):
+        if tid in completed:
+            continue
+        content = path.read_text()
+        total = _estimate_tokens(content) + spec_tokens
+        if total > TOKEN_LIMIT:
+            print(f"⚠  ticket-{tid} ({path.stem}) ~{total} tokens — 超出智能区上限 ({TOKEN_LIMIT})")
+            print(f"   建议拆分后再运行")
+        elif total > TOKEN_WARN:
+            print(f"⚠  ticket-{tid} ({path.stem}) ~{total} tokens — 接近智能区上限")
+
+
 def cmd_run(project: Path):
     """Auto-implement loop."""
     os.chdir(str(project))
@@ -265,6 +311,9 @@ def cmd_run(project: Path):
 
     completed = _get_completed_tickets(project)
     spec_path = project / "scratch" / "SPEC.md"
+
+    # Pre-check: warn on oversized tickets
+    _check_ticket_sizes(project, completed)
 
     while True:
         next_ticket = _find_next_ticket(project, completed)
