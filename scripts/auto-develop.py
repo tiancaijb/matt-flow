@@ -185,6 +185,8 @@ def cmd_status(project: Path) -> dict:
     state["next_ticket_name"] = next_ticket[1].name if next_ticket else None
     state["next_ticket_path"] = str(next_ticket[1]) if next_ticket else None
 
+    state["project_type"] = _detect_project_type(project) if state["has_scratch"] else "unknown"
+
     # Determine phase
     if not state["has_git"]:
         state["phase"] = "init"
@@ -215,6 +217,8 @@ def print_status(state: dict):
         "unknown": "状态不明",
     }
     print(f"Phase: {state['phase']}  ({phase_labels.get(state['phase'], '')})")
+    ptype = state.get("project_type", "unknown")
+    print(f"Project type: {ptype}")
     print()
 
     # Files
@@ -430,9 +434,18 @@ def _implement_ticket(
 def _verify_implementation(project: Path) -> list:
     """Run verification steps after implementation. Returns list of VerificationError (empty = all pass)."""
     errors = []
+    ptype = _detect_project_type(project)
 
     def _run_step(step_name: str, cmd: list[str]):
         """Run a single verification step, return VerificationError on failure or None."""
+        # Skip if the tool is not available
+        tool = cmd[0]
+        if tool in ("go", "cargo", "mvn", "npx"):
+            which_result = _run(["which", tool], project)
+            if which_result.returncode != 0:
+                errors.append(VerificationError(step_name, -1, f"{tool} 未安装，跳过"))
+                return
+
         result = _run(cmd, project)
         if result.returncode != 0:
             stderr = result.stderr.strip()
@@ -441,17 +454,54 @@ def _verify_implementation(project: Path) -> list:
                 stderr = "\n".join(lines[:3]) + f"\n  (... {len(lines)-3} more lines)"
             errors.append(VerificationError(step_name, result.returncode, stderr))
 
-    # TypeScript / Node projects
-    if (project / "package.json").exists():
-        _run_step("TypeScript 类型检查", ["npx", "tsc", "--noEmit"])
-        _run_step("构建", ["npm", "run", "build"])
-        _run_step("测试套件", ["npm", "test"])
-
-    # Python projects
-    if (project / "pyproject.toml").exists() or (project / "setup.py").exists():
-        _run_step("Python 测试", ["python3", "-m", "pytest", "-x", "-q"])
+    verifiers = _LANG_VERIFIERS.get(ptype, [])
+    for step_name, cmd in verifiers:
+        _run_step(step_name, cmd)
 
     return errors
+
+
+def _detect_project_type(project: Path) -> str:
+    """Detect project type by checking for characteristic files.
+    Returns one of: 'go', 'rust', 'java', 'node', 'python', 'unknown'.
+    """
+    checks = [
+        ("go.mod", "go"),
+        ("Cargo.toml", "rust"),
+        ("pom.xml", "java"),
+        ("package.json", "node"),
+    ]
+    for filename, ptype in checks:
+        if (project / filename).exists():
+            return ptype
+    if (project / "pyproject.toml").exists() or (project / "setup.py").exists():
+        return "python"
+    return "unknown"
+
+
+# ── 语言验证映射 ──
+
+_LANG_VERIFIERS: dict[str, list[tuple[str, list[str]]]] = {
+    "go": [
+        ("Go vet", ["go", "vet", "./..."]),
+        ("Go 测试", ["go", "test", "./..."]),
+    ],
+    "rust": [
+        ("Rust cargo check", ["cargo", "check"]),
+        ("Rust 测试", ["cargo", "test"]),
+    ],
+    "java": [
+        ("Maven 测试", ["mvn", "test"]),
+    ],
+    "node": [
+        ("TypeScript 类型检查", ["npx", "tsc", "--noEmit"]),
+        ("构建", ["npm", "run", "build"]),
+        ("测试套件", ["npm", "test"]),
+    ],
+    "python": [
+        ("Python 测试", ["python3", "-m", "pytest", "-x", "-q"]),
+    ],
+}
 
 
 def _commit_ticket(tid: str, path: Path):
