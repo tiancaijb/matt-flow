@@ -7,7 +7,9 @@ matt-flow auto-develop
 用法：
   python3 <skill-dir>/scripts/auto-develop.py --status <project-dir>     检查项目状态
   python3 <skill-dir>/scripts/auto-develop.py --next <project-dir>       显示下一个未完成的 ticket
-  python3 <skill-dir>/scripts/auto-develop.py <project-dir>              自动实现未完成的 tickets
+  python3 <skill-dir>/scripts/auto-develop.py --run <project-dir>        自动实现（失败即退出）
+  python3 <skill-dir>/scripts/auto-develop.py --resume <project-dir>    自动实现（失败跳过，继续下一个）
+  python3 <skill-dir>/scripts/auto-develop.py <project-dir>              等价于 --run
 """
 
 import os
@@ -360,8 +362,13 @@ def _check_ticket_sizes(project: Path, completed: set[str]):
             print(f"⚠  ticket-{tid} ({path.stem}) ~{total} tokens — 接近智能区上限")
 
 
-def cmd_run(project: Path):
-    """Auto-implement loop."""
+def cmd_run(project: Path, resume: bool = False):
+    """Auto-implement loop.
+
+    Args:
+        project: Project directory.
+        resume: If True, skip failed tickets and continue instead of exiting.
+    """
     os.chdir(str(project))
 
     # Check state first
@@ -380,6 +387,8 @@ def cmd_run(project: Path):
 
     # Pre-check: warn on oversized tickets
     _check_ticket_sizes(project, completed)
+
+    failed_tickets = []
 
     while True:
         next_ticket = _find_next_ticket(project, completed)
@@ -421,10 +430,21 @@ def cmd_run(project: Path):
         else:
             print(f"\n❌ ticket-{tid} 重试 {MAX_RETRIES} 次均失败")
             print(f"   文件: {path}")
-            print("   请手动检查后重试，或跳过：将 'status: skipped' 写入 ticket 文件头")
-            sys.exit(1)
+            _write_last_error(project, tid, [VerificationError("implement", -1, "重试 3 次均失败")])
+            if resume:
+                failed_tickets.append(tid)
+                print(f"   → 跳过，继续下一个 ticket (--resume 模式)")
+            else:
+                print("   请手动检查后重试，或跳过：将 'status: skipped' 写入 ticket 文件头")
+                sys.exit(1)
 
-    print(f"\n🎉 所有 ticket 已完成！")
+    if failed_tickets:
+        print(f"\n⚠️  以下 ticket 失败（已跳过）:")
+        for tid in failed_tickets:
+            print(f"  - ticket-{tid}")
+        print(f" 修复后运行 --resume 继续")
+    else:
+        print(f"\n🎉 所有 ticket 已完成！")
 
 
 def _implement_ticket(
@@ -548,6 +568,9 @@ def main():
     elif sys.argv[1] == "--run":
         mode = "run"
         arg_idx = 2
+    elif sys.argv[1] == "--resume":
+        mode = "resume"
+        arg_idx = 2
 
     if arg_idx >= len(sys.argv):
         target = "."
@@ -564,6 +587,8 @@ def main():
         cmd_status_main(project)
     elif mode == "next":
         cmd_next(project)
+    elif mode == "resume":
+        cmd_run(project, resume=True)
     else:  # run
         cmd_run(project)
 
