@@ -87,8 +87,9 @@ python3 <skill-dir>/scripts/auto-develop.py <project-dir>
 2. **git log** 检查是否已有 `ticket-NNNN` 提交 → 跳过已完成的
 3. 未完成的 → 调 `pi` 加载 Spec + Ticket 上下文，实现 ticket
 4. 跑项目类型检查/构建/测试
-5. 验证通过 → **git commit**；失败 → 重试最多 3 次
-6. 继续下一个 ticket
+5. **调 `pi` 子进程做 Code Review**（双轴审查：对照 Spec + 对照代码标准）
+6. 验证通过 → **git commit**；失败 → 重试最多 3 次
+7. 继续下一个 ticket
 
 **完成标志**：脚本退出码为 0，表示所有 ticket 已提交。
 

@@ -420,6 +420,15 @@ def cmd_run(project: Path, resume: bool = False):
                 _write_last_error(project, tid, errors)
                 continue
 
+            # ── Code Review ──
+            review_errors = _code_review(project, spec_path, tid, path)
+            if review_errors:
+                print(f"❌ Code Review 未通过 (ticket-{tid}):")
+                for err in review_errors:
+                    print(f"  {err}")
+                _write_last_error(project, tid, review_errors)
+                continue
+
             # ── Commit ──
             _clear_last_error(project)
             _commit_ticket(tid, path)
@@ -494,6 +503,54 @@ def _verify_implementation(project: Path) -> list:
         _run_step(step_name, cmd)
 
     return errors
+
+
+def _code_review(
+    project: Path,
+    spec_path: Path,
+    tid: str,
+    ticket_path: Path,
+) -> list:
+    """Run sub-agent code review: compare implementation against Spec + ticket.
+    Returns list of VerificationError (empty = pass).
+    """
+    print(f"   🔍 Code Review 进行中...")
+
+    # Build context: spec + ticket + git diff
+    context_args = []
+    if spec_path.exists():
+        context_args.append(f"@{spec_path}")
+    context_args.append(f"@{ticket_path}")
+
+    # Add git diff if available
+    diff_result = _run(["git", "diff", "HEAD", "--stat"], project)
+    if diff_result.returncode == 0 and diff_result.stdout.strip():
+        changed = diff_result.stdout.strip()
+        context_args.append(f"已修改文件:\n{changed}")
+
+    cmd = ["pi", "-p", "--no-session"] + context_args + [
+        "对已实现的内容做 Code Review，从两个维度审查：",
+        "1. Spec 维度：实现是否符合 SPEC.md 和 ticket 中的验收标准？",
+        "2. 代码标准维度：代码有没有坏味道、风格问题、安全隐患？",
+        "如果发现问题，列出具体问题和修改建议。如果没有问题，只输出 '✅ Code Review 通过'。"
+    ]
+
+    result = _run(cmd, project)
+    if result.returncode != 0:
+        return [VerificationError("Code Review", result.returncode,
+                                   result.stderr.strip()[:200] or "子进程异常退出")]
+
+    # Check if review explicitly passed
+    output = result.stdout.strip()
+    if "通过" in output or "pass" in output.lower():
+        print(f"   ✅ Code Review 通过")
+        return []
+
+    # If output has substantial content, treat as review findings
+    if len(output) > 20:
+        return [VerificationError("Code Review", 1, output[:500])]
+
+    return []
 
 
 def _detect_project_type(project: Path) -> str:
