@@ -140,7 +140,7 @@ info "配置 API Key"
 # 检测已有 API Key
 HAS_KEY=false
 if [ -n "${DEEPSEEK_API_KEY:-}" ] || [ -n "${OPENCODE_API_KEY:-}" ] || [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${OPENAI_API_KEY:-}" ]; then
-    log "检测到已配置 API Key，跳过"
+    log "检测到已配置 API Key"
     HAS_KEY=true
 fi
 
@@ -234,7 +234,7 @@ else
     mkdir -p "$MATT_FLOW_DIR/scripts"
 
     if [ -f "$MATT_FLOW_DIR/SKILL.md" ]; then
-        log "matt-flow Skill 已存在，跳过下载"
+        log "matt-flow Skill 已安装"
     else
         # 下载 SKILL.md
         if command -v curl &>/dev/null; then
@@ -257,7 +257,11 @@ else
 
     # 如果下载失败，用内嵌模板（含 SKILL.md + scripts）
     if [ ! -f "$MATT_FLOW_DIR/SKILL.md" ] || [ ! -s "$MATT_FLOW_DIR/SKILL.md" ]; then
-        info "下载失败，使用内置模板..."
+        warn "网络下载失败，可手动下载后重试："
+        warn "  curl -fsSL https://raw.githubusercontent.com/tiancaijb/matt-flow/main/SKILL.md -o \"$MATT_FLOW_DIR/SKILL.md\""
+        warn "  curl -fsSL https://raw.githubusercontent.com/tiancaijb/matt-flow/main/scripts/auto-develop.py -o \"$MATT_FLOW_DIR/scripts/auto-develop.py\""
+        warn "  curl -fsSL https://raw.githubusercontent.com/tiancaijb/matt-flow/main/scripts/init-project.py -o \"$MATT_FLOW_DIR/scripts/init-project.py\""
+        info "使用内置模板作为回退..."
 
         cat > "$MATT_FLOW_DIR/SKILL.md" <<- 'SKILL'
 ---
@@ -342,7 +346,11 @@ echo ""
 info "安装 Matt Pocock AI Coding Skills..."
 echo "  这些是 grill-with-docs / to-spec / to-tickets / implement / code-review 等核心技能"
 echo ""
-if command -v npx &>/dev/null; then
+# 检测是否已安装（以 grill-with-docs 为标志）
+MATT_SKILL_MARKER="$HOME/.pi/agent/skills/grill-with-docs"
+if [ -d "$MATT_SKILL_MARKER" ]; then
+    log "Matt Pocock Skills 已安装"
+elif command -v npx &>/dev/null; then
     npx skills@latest add mattpocock/skills && log "Matt Pocock Skills 安装完成" || warn "安装失败，可稍后手动安装：npx skills@latest add mattpocock/skills"
 else
     warn "npx 不可用，请安装 Node.js 后手动安装："

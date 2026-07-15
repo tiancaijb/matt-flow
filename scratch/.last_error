@@ -1,0 +1,21 @@
+ticket-0002:
+  • Code Review → 退出码 1
+  有发现具体问题。以下是逐项列出：
+
+---
+
+### 问题 1：消息尾随 ✓ 导致双 checkmark（4 处）
+
+**根因:**
+`log()` 定义为 `echo -e "${GREEN}✓${NC} $1"` — 已自带 `✓` 前缀。消息字符串中再追加 ` ✓` 会导致渲染为 `✓ ... ✓`。
+
+既有代码中其他 12 处 `log()` 调用均无此模式，这是新增模式与既有惯例的冲突。
+
+**涉及行:**
+
+| 行号 | 当前内容 | 渲染输出 |
+|------|---------|---------|
+| L143 | `log "检测到已配置 API Key ✓"` | `✓ 检测到已配置 API Key ✓` |
+| L237 | `log "matt-flow Skill 已安装 ✓"` | `✓ matt-flow Skill 已安装 ✓` |
+| L352 | `log "Matt Pocock Skills 已安装 ✓"` | `✓ Matt Pocock Skills 已安装 ✓` |
+| L354 | `log "Matt Pocock Skills 安
