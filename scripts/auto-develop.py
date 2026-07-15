@@ -97,12 +97,14 @@ def _git_porcelain(project: Path) -> bool:
 
 
 def _get_completed_tickets(project: Path) -> set[str]:
-    """Check git log for already committed tickets."""
+    """Check git log for already committed tickets.
+    Returns set of 'tid:name' keys like '0001:token-estimation'.
+    """
     completed = set()
     for line in _git_log(project):
-        m = re.match(r"ticket-(\d+)", line)
+        m = re.match(r"ticket-(\d+): (.+)$", line)
         if m:
-            completed.add(m.group(1))
+            completed.add(f"{m.group(1)}:{m.group(2)}")
     return completed
 
 
@@ -127,11 +129,13 @@ def _find_next_ticket(
 ) -> Optional[tuple[str, Path]]:
     """Find the first uncompleted ticket (skips archived/skipped ones)."""
     for tid, path in _get_ticket_files(project):
-        if tid in completed:
+        ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
+        key = f"{tid}:{ticket_name}"
+        if key in completed:
             continue
         content = path.read_text()
         if "status: archived" in content or "status: skipped" in content:
-            completed.add(tid)
+            completed.add(key)
             continue
         return (tid, path)
     return None
@@ -167,20 +171,26 @@ def cmd_status(project: Path) -> dict:
     }
 
     # Tickets
-    completed = _get_completed_tickets(project) if state["has_git"] else set()
+    all_keys = _get_completed_tickets(project) if state["has_git"] else set()
     all_tickets = _get_ticket_files(project)
     skipped = set()
+    # Match completed keys against current ticket files
+    completed = set()
     for tid, path in all_tickets:
+        ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
+        key = f"{tid}:{ticket_name}"
+        if key in all_keys:
+            completed.add(key)
         content = path.read_text()
         if "status: archived" in content or "status: skipped" in content:
-            skipped.add(tid)
+            skipped.add(key)
 
     state["total_tickets"] = len(all_tickets)
     state["completed_tickets"] = len(completed)
     state["skipped_tickets"] = len(skipped)
     state["pending_tickets"] = state["total_tickets"] - state["completed_tickets"] - state["skipped_tickets"]
 
-    next_ticket = _find_next_ticket(project, completed)
+    next_ticket = _find_next_ticket(project, all_keys)
     state["next_ticket_id"] = next_ticket[0] if next_ticket else None
     state["next_ticket_name"] = next_ticket[1].name if next_ticket else None
     state["next_ticket_path"] = str(next_ticket[1]) if next_ticket else None
@@ -265,8 +275,10 @@ def print_status(state: dict):
         completed = _get_completed_tickets(Path(state["project"]))
         ticket_details = []
         for tid, path in _get_ticket_files(Path(state["project"])):
+            ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
+            key = f"{tid}:{ticket_name}"
             content = path.read_text()
-            if tid in completed:
+            if key in completed:
                 status = "DONE"
             elif "status: archived" in content or "status: skipped" in content:
                 status = "SKIPPED"
@@ -335,7 +347,9 @@ def _check_ticket_sizes(project: Path, completed: set[str]):
     spec_tokens = _estimate_tokens(spec_text)
 
     for tid, path in _get_ticket_files(project):
-        if tid in completed:
+        ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
+        key = f"{tid}:{ticket_name}"
+        if key in completed:
             continue
         content = path.read_text()
         total = _estimate_tokens(content) + spec_tokens
@@ -400,7 +414,8 @@ def cmd_run(project: Path):
             # ── Commit ──
             _clear_last_error(project)
             _commit_ticket(tid, path)
-            completed.add(tid)
+            ticket_name = path.stem.split("-", 1)[1] if "-" in path.stem else path.stem
+            completed.add(f"{tid}:{ticket_name}")
             print(f"✅ ticket-{tid} 已提交")
             break
         else:
