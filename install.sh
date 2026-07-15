@@ -136,98 +136,52 @@ fi
 # ── 配置 API Key ──
 echo ""
 info "配置 API Key"
-info "pi 通过环境变量读取 API Key，不需要配置文件"
-echo ""
-echo "  推荐方式（国内用户友好，便宜，无需翻墙）："
-echo ""
-echo "  【方案 A】DeepSeek 官方 API（推荐新手）"
-echo "    价格：¥2/百万 token（约等于写 3 本《三体》）"
-echo "    注册：https://platform.deepseek.com/"
-echo "    充值 10 块钱能用非常久"
-echo ""
-echo "  【方案 B】OpenCode Go 订阅（推荐重度用户）"
-echo "    包含 DeepSeek-V4-Flash，不限量调用"
-echo "    订阅：https://opencode.com/go"
-echo ""
-echo "  其他选项（如果用 OpenAI 或 Anthropic）："
-echo "    设置 ANTHROPIC_API_KEY 或 OPENAI_API_KEY 环境变量即可"
-echo ""
 
 # 检测已有 API Key
-deepseek_configured=false
-opencode_configured=false
-
-if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
-    log "检测到已配置 DEEPSEEK_API_KEY"
-    deepseek_configured=true
-fi
-if [ -n "${OPENCODE_API_KEY:-}" ]; then
-    log "检测到已配置 OPENCODE_API_KEY"
-    opencode_configured=true
+HAS_KEY=false
+if [ -n "${DEEPSEEK_API_KEY:-}" ] || [ -n "${OPENCODE_API_KEY:-}" ] || [ -n "${ANTHROPIC_API_KEY:-}" ] || [ -n "${OPENAI_API_KEY:-}" ]; then
+    log "检测到已配置 API Key，跳过"
+    HAS_KEY=true
 fi
 
-if [ "$deepseek_configured" = false ] && [ "$opencode_configured" = false ]; then
-    echo "  请选择 API Key 方式："
-    echo "    1) DeepSeek 官方 API（填 API Key）"
-    echo "    2) OpenCode Go 订阅（填 API Key）"
-    echo "    3) 两者都有（都填）"
-    echo "    4) 跳过，我自己配"
+if [ "$HAS_KEY" = false ]; then
     echo ""
-    read -p "  输入选项 (1/2/3/4，默认 1): " API_CHOICE
-    API_CHOICE="${API_CHOICE:-1}"
+    echo "  需要一个大模型 API Key 才能使用。推荐 DeepSeek（国内友好，注册送额度）："
+    echo ""
     
-    SHELL_PROFILE="$HOME/.bashrc"
-    [ -f "$HOME/.zshrc" ] && SHELL_PROFILE="$HOME/.zshrc"
+    # 自动打开 DeepSeek 注册页面
+    DEEPSEEK_URL="https://platform.deepseek.com/"
+    echo -n "  → 正在打开 DeepSeek 注册页面..."
+    (xdg-open "$DEEPSEEK_URL" 2>/dev/null || open "$DEEPSEEK_URL" 2>/dev/null || echo -n "（无法自动打开）")
+    echo ""
+    echo "    如果浏览器没自动打开，请访问："
+    echo "    $DEEPSEEK_URL"
+    echo ""
+    echo "    注册后点击「API Keys」创建，复制以 sk- 开头的 key 粘贴到下面："
+    echo ""
+    read -p "  粘贴 DeepSeek API Key (留空则跳过): " DS_KEY
     
-    case "$API_CHOICE" in
-        1)
-            read -p "  输入 DeepSeek API Key (sk-...): " DS_KEY
-            if [ -n "$DS_KEY" ]; then
-                echo "" >> "$SHELL_PROFILE"
-                echo "# matt-flow: DeepSeek API Key" >> "$SHELL_PROFILE"
-                echo "export DEEPSEEK_API_KEY=$DS_KEY" >> "$SHELL_PROFILE"
-                export DEEPSEEK_API_KEY="$DS_KEY"
-                log "DEEPSEEK_API_KEY 已写入 $SHELL_PROFILE"
-                log "使用命令启动: pi --model deepseek/deepseek-chat"
-            fi
-            ;;
-        2)
-            read -p "  输入 OpenCode API Key: " OC_KEY
-            if [ -n "$OC_KEY" ]; then
-                echo "" >> "$SHELL_PROFILE"
-                echo "# matt-flow: OpenCode API Key" >> "$SHELL_PROFILE"
-                echo "export OPENCODE_API_KEY=$OC_KEY" >> "$SHELL_PROFILE"
-                export OPENCODE_API_KEY="$OC_KEY"
-                log "OPENCODE_API_KEY 已写入 $SHELL_PROFILE"
-                log "使用命令启动: pi --model opencode/deepseek-v4-flash"
-            fi
-            ;;
-        3)
-            read -p "  输入 DeepSeek API Key (sk-...): " DS_KEY
-            read -p "  输入 OpenCode API Key: " OC_KEY
-            if [ -n "$DS_KEY" ]; then
-                echo "" >> "$SHELL_PROFILE"
-                echo "# matt-flow: API Keys" >> "$SHELL_PROFILE"
-                echo "export DEEPSEEK_API_KEY=$DS_KEY" >> "$SHELL_PROFILE"
-                export DEEPSEEK_API_KEY="$DS_KEY"
-            fi
-            if [ -n "$OC_KEY" ]; then
-                echo "export OPENCODE_API_KEY=$OC_KEY" >> "$SHELL_PROFILE"
-                export OPENCODE_API_KEY="$OC_KEY"
-            fi
-            log "API Key 已写入 $SHELL_PROFILE"
-            ;;
-        4)
-            warn "跳过 API Key 配置，稍后手动设置"
-            ;;
-    esac
+    if [ -n "$DS_KEY" ]; then
+        SHELL_PROFILE="$HOME/.bashrc"
+        [ -f "$HOME/.zshrc" ] && SHELL_PROFILE="$HOME/.zshrc"
+        echo "" >> "$SHELL_PROFILE"
+        echo "# matt-flow: DeepSeek API Key" >> "$SHELL_PROFILE"
+        echo "export DEEPSEEK_API_KEY=$DS_KEY" >> "$SHELL_PROFILE"
+        export DEEPSEEK_API_KEY="$DS_KEY"
+        log "DEEPSEEK_API_KEY 已保存"
+    else
+        warn "未配置 API Key，稍后可以手动设置"
+        echo ""
+        echo "  手动设置方法："
+        echo "    export DEEPSEEK_API_KEY=sk-your-key-here"
+        echo "    echo 'export DEEPSEEK_API_KEY=sk-your-key-here' >> ~/.bashrc"
+    fi
 fi
 
-# 保存默认模型选择到 pi 配置（通过别名或环境变量）
 if [ -n "${OPENCODE_API_KEY:-}" ] && [ -z "${DEEPSEEK_API_KEY:-}" ]; then
-    log "推荐启动命令: pi --model opencode/deepseek-v4-flash"
+    log "检测到 OpenCode Key，使用模型: opencode/deepseek-v4-flash"
 elif [ -n "${DEEPSEEK_API_KEY:-}" ]; then
-    log "推荐启动命令: pi --model deepseek/deepseek-chat"
+    log "检测到 DeepSeek Key，使用模型: deepseek/deepseek-chat"
 fi
 
 # ── 安装 matt-flow Skill ──
