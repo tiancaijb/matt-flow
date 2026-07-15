@@ -11,7 +11,7 @@ Matt Pocock AI Coding Skills 的 pi 适配版。
 ## 一行命令安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wangy/matt-flow/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tiancaijb/matt-flow/main/install.sh | bash
 ```
 
 安装完成后：

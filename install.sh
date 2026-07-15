@@ -4,7 +4,7 @@ set -euo pipefail
 # ============================================================
 #  matt-flow 一键安装脚本
 #  让 AI 自己写代码的自动化开发流水线
-#  用法：curl -fsSL https://raw.githubusercontent.com/wangy/matt-flow/main/install.sh | bash
+#  用法：curl -fsSL https://raw.githubusercontent.com/tiancaijb/matt-flow/main/install.sh | bash
 # ============================================================
 
 RED='\033[0;31m'
@@ -210,7 +210,7 @@ if [ -f "$MATT_FLOW_DIR/SKILL.md" ]; then
 else
     # 从 GitHub 下载（如果不可达则用本地模板）
     if command -v curl &>/dev/null; then
-        curl -sfL "https://raw.githubusercontent.com/wangy/matt-flow/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null && \
+        curl -sfL "https://raw.githubusercontent.com/tiancaijb/matt-flow/main/SKILL.md" -o "$MATT_FLOW_DIR/SKILL.md" 2>/dev/null && \
             log "matt-flow Skill 下载完成" || \
             warn "下载失败，使用内置模板"
     fi
