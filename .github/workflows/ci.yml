@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck — install.sh
+        uses: reviewdog/action-shellcheck@v1
+        with:
+          files: install.sh
+          fail_on_error: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Python syntax check
+        run: python3 -m py_compile scripts/*.py
+
+      - name: auto-develop.py --help
+        run: python3 scripts/auto-develop.py --help
+
+      - name: auto-develop.py --status .
+        run: python3 scripts/auto-develop.py --status .
