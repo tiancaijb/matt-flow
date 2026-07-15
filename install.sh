@@ -4,7 +4,7 @@ set -euo pipefail
 # ============================================================
 #  matt-flow 一键安装脚本
 #  让 AI 自己写代码的自动化开发流水线
-#  用法：curl -fsSL https://xxx/install-matt-flow.sh | bash
+#  用法：curl -fsSL https://raw.githubusercontent.com/wangy/matt-flow/main/install.sh | bash
 # ============================================================
 
 RED='\033[0;31m'
