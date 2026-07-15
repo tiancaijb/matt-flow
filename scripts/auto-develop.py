@@ -450,12 +450,13 @@ def _check_ticket_sizes(project: Path, completed: set[str]):
             print(f"⚠  ticket-{tid} ({path.stem}) ~{total} tokens — 接近智能区上限")
 
 
-def cmd_run(project: Path, resume: bool = False):
+def cmd_run(project: Path, resume: bool = False, auto_yes: bool = False):
     """Auto-implement loop.
 
     Args:
         project: Project directory.
         resume: If True, skip failed tickets and continue instead of exiting.
+        auto_yes: If True, skip estimate confirmation.
     """
     os.chdir(str(project))
 
@@ -483,7 +484,7 @@ def cmd_run(project: Path, resume: bool = False):
         return
 
     # Confirm
-    if not resume:
+    if not resume and not auto_yes:
         print("使用 --run -y 跳过预估确认直接开跑")
         sys.exit(0)
 
@@ -540,6 +541,7 @@ def cmd_run(project: Path, resume: bool = False):
             _write_last_error(project, tid, [VerificationError("implement", -1, "重试 3 次均失败")])
             if resume:
                 failed_tickets.append(tid)
+                completed.add(tid)  # 标记为已完成（跳过），避免死循环
                 print(f"   → 跳过，继续下一个 ticket (--resume 模式)")
             else:
                 print("   请手动检查后重试，或跳过：将 'status: skipped' 写入 ticket 文件头")
@@ -755,7 +757,7 @@ def main():
     elif mode == "resume":
         cmd_run(project, resume=True)
     else:  # run
-        cmd_run(project, resume=auto_yes)   # -y mode skips confirmation but not failures
+        cmd_run(project, auto_yes=auto_yes)
 
 
 if __name__ == "__main__":
