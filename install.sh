@@ -28,18 +28,39 @@ echo ""
 # ── 检测操作系统 ──
 OS="$(uname -s)"
 case "$OS" in
-  Linux)   OS="linux" ;;
+  Linux)
+    # 检查是否在 WSL 中
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+      OS="wsl"
+    else
+      OS="linux"
+    fi
+    ;;
   Darwin)  OS="macos" ;;
   *)
-    err "检测到 Windows 环境"
-    err "本脚本需要在 WSL2（Linux 子系统）中运行"
-    err ""
-    err "请先在 PowerShell（管理员）中执行："
-    err "  wsl --install"
-    err "重启电脑后，打开 Ubuntu 终端，再运行本脚本"
-    err ""
-    err "Mac 用户可以直接运行本脚本，无需额外操作"
-    exit 1
+    echo ""
+    echo -e "${YELLOW}检测到 Windows 环境，正在自动安装 WSL2...${NC}"
+    echo ""
+    # 尝试通过 PowerShell 自动安装 WSL2
+    powershell.exe -Command "Start-Process powershell -Verb RunAs -ArgumentList 'wsl --install'" 2>/dev/null && {
+      echo -e "${GREEN}✓ WSL2 安装已启动${NC}"
+      echo ""
+      echo -e "${YELLOW}请等待 WSL2 安装完成，然后重启电脑。${NC}"
+      echo "重启后打开 Ubuntu 终端，再次运行本脚本即可继续。"
+      echo ""
+      read -p "按回车键关机重启 (Ctrl+C 取消)..."
+      shutdown.exe /r /t 5
+      exit 0
+    } || {
+      echo -e "${RED}自动安装失败，请手动操作：${NC}"
+      echo ""
+      echo "  1. 右键点击开始菜单 → Windows PowerShell (管理员)"
+      echo "  2. 输入：wsl --install"
+      echo "  3. 等待安装完成，重启电脑"
+      echo "  4. 打开 Ubuntu，再次运行本脚本"
+      echo ""
+      exit 1
+    }
     ;;
 esac
 log "检测到操作系统: $OS"
@@ -358,11 +379,6 @@ echo "  3. 在 pi 对话中输入 /matt-flow 启动工作流"
 echo ""
 echo "  或者直接自动跑："
 echo "     cd $DEMO_DIR && python3 scripts/auto-develop.py"
-echo ""
-echo ""
-echo -e "${YELLOW}  Windows 用户注意：${NC}"
-echo "  本脚本需在 WSL2（Ubuntu）中运行，不是在 Windows cmd/PowerShell 里"
-echo "  还没装 WSL2？管理员 PowerShell 里执行：wsl --install，重启即可"
 echo ""
 echo -e "${YELLOW}  首次使用提示：${NC}"
 echo "  - 启动 /matt-flow 后，AI 会追问你需求细节（Grill 阶段）"
