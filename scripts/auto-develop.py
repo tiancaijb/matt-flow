@@ -34,6 +34,47 @@ TOKEN_WARN = 100_000  # 警告阈值
 TOKEN_LIMIT = 140_000  # 智能区上限
 
 
+# ── 结构化错误 ───────────────────────────────────────────
+
+class VerificationError:
+    """A single verification step failure."""
+    def __init__(self, step: str, exit_code: int, stderr_summary: str):
+        self.step = step
+        self.exit_code = exit_code
+        self.stderr_summary = stderr_summary
+
+    def __str__(self) -> str:
+        return f"• {self.step} → 退出码 {self.exit_code}\n  {self.stderr_summary}"
+
+
+LAST_ERROR_FILE = "scratch/.last_error"
+
+
+def _read_last_error(project: Path) -> Optional[str]:
+    """Read last error info from scratch/.last_error."""
+    path = project / LAST_ERROR_FILE
+    if path.exists():
+        return path.read_text().strip()
+    return None
+
+
+def _write_last_error(project: Path, tid: str, errors: list):
+    """Write last error info to scratch/.last_error."""
+    path = project / LAST_ERROR_FILE
+    lines = [f"ticket-{tid}:"]
+    for err in errors:
+        lines.append(f"  {err}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines))
+
+
+def _clear_last_error(project: Path):
+    """Clear the last error file."""
+    path = project / LAST_ERROR_FILE
+    if path.exists():
+        path.unlink()
+
+
 # ── 辅助函数 ─────────────────────────────────────────────
 
 def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
@@ -43,7 +84,7 @@ def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
 
 def _git_log(project: Path) -> list[str]:
     """Return commit subjects from git log."""
-    result = _run(["git", "log", "--oneline", "--format=%(subject)"], project)
+    result = _run(["git", "log", "--oneline", "--format=%s"], project)
     if result.returncode != 0:
         return []
     return result.stdout.splitlines()
@@ -208,6 +249,13 @@ def print_status(state: dict):
         print(f"  下一个: (无)")
     print()
 
+    # Last error
+    last_err = _read_last_error(Path(state["project"]))
+    if last_err:
+        print(f"最近错误:")
+        print(f"  {last_err}")
+        print()
+
     # Ticket detail with token estimates
     if state["total_tickets"] > 0:
         completed = _get_completed_tickets(Path(state["project"]))
@@ -337,12 +385,16 @@ def cmd_run(project: Path):
                 continue
 
             # ── Verify ──
-            all_pass = _verify_implementation(project)
-            if not all_pass:
-                print(f"❌ 验证未通过")
+            errors = _verify_implementation(project)
+            if errors:
+                print(f"❌ 验证失败 (ticket-{tid}):")
+                for err in errors:
+                    print(f"  {err}")
+                _write_last_error(project, tid, errors)
                 continue
 
             # ── Commit ──
+            _clear_last_error(project)
             _commit_ticket(tid, path)
             completed.add(tid)
             print(f"✅ ticket-{tid} 已提交")
@@ -375,37 +427,31 @@ def _implement_ticket(
     return result.returncode == 0
 
 
-def _verify_implementation(project: Path) -> bool:
-    """Run verification steps after implementation."""
+def _verify_implementation(project: Path) -> list:
+    """Run verification steps after implementation. Returns list of VerificationError (empty = all pass)."""
+    errors = []
+
+    def _run_step(step_name: str, cmd: list[str]):
+        """Run a single verification step, return VerificationError on failure or None."""
+        result = _run(cmd, project)
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            lines = stderr.split("\n")
+            if len(lines) > 3:
+                stderr = "\n".join(lines[:3]) + f"\n  (... {len(lines)-3} more lines)"
+            errors.append(VerificationError(step_name, result.returncode, stderr))
 
     # TypeScript / Node projects
     if (project / "package.json").exists():
-        for cmd in [
-            ["npx", "tsc", "--noEmit"],
-            ["npm", "run", "build"],
-            ["npm", "test"],
-        ]:
-            result = _run(cmd, project)
-            if result.returncode != 0:
-                print(f"   验证失败: {' '.join(cmd)}")
-                return False
+        _run_step("TypeScript 类型检查", ["npx", "tsc", "--noEmit"])
+        _run_step("构建", ["npm", "run", "build"])
+        _run_step("测试套件", ["npm", "test"])
 
     # Python projects
     if (project / "pyproject.toml").exists() or (project / "setup.py").exists():
-        for cmd in [
-            ["python3", "-m", "pytest", "-x", "-q"],
-        ]:
-            result = _run(cmd, project)
-            if result.returncode != 0:
-                print(f"   验证失败: {' '.join(cmd)}")
-                return False
+        _run_step("Python 测试", ["python3", "-m", "pytest", "-x", "-q"])
 
-    # Git clean check
-    if not _git_porcelain(project):
-        print("   工作区有未提交文件（可能有新文件产生）")
-        # This is expected after implementation — return True
-
-    return True
+    return errors
 
 
 def _commit_ticket(tid: str, path: Path):
