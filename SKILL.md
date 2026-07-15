@@ -1,9 +1,10 @@
 ---
 name: matt-flow
 description: >
-  AI Coding Skills 工程工作流：Grill → Tickets → Auto-Implement → Re-Grill。
+  AI Coding Skills 工程工作流：Grill → Tickets → Auto-Implement → Code Review。
   规划阶段和你对话拆 ticket，实施阶段自动跑循环——找下一个未完成的 ticket、pi -p --no-session 实现、
-  跑测试、git commit。失败重试 3 次后停。全部做完后叫你回来 re-grill。
+  跑测试、git commit。每次实现后自动跑 Code Review（独立审核，对比 Spec 和代码标准），
+  审核通过才 commit。全部做完后叫你回来验收。
 argument-hint: "<project-dir>"
 disable-model-invocation: false
 ---
@@ -130,7 +131,7 @@ loop:
 
 ### 归档 / 跳过 ticket
 
-Grill 或 Re-Grill 阶段，想跳过某个 ticket（不删文件）：
+Grill 阶段，想跳过某个 ticket（不删文件）：
 
 > 用户："这个 ticket 先归档"
 > 用户："跳过 ticket X"
@@ -152,14 +153,50 @@ status: archived
 
 **不需要你手动改文件**——Grill 阶段你只需说"归档"或"跳过"，我来改文件、提交。
 
-### Phase 3: Re-Grill（人参与 → review + 下轮）
+### Phase 3: Code Review（自动 → 独立审核 → 通过才 commit）
 
-回到你这里：
+**Matt Pocock 的核心原则**：写代码的 agent 不能审自己的代码。
+agents are often really bad at editing code they've just written
+because they have written it, so they think "okay, fantastic, that was fine."
 
-1. Review 自动跑的成果
-2. 修 bug（如果有失败的）
-3. Grill 下一批 ticket
-4. 回到 Phase 2
+每次 Ticket 实现 + 测试通过后，**必须走 Code Review 才能 commit**。
+
+#### 执行方式
+
+用独立的 pi 调用（新会话，不共享上下文）：
+
+```bash
+pi -p --no-session @scratch/SPEC.md \
+  @path/to/implemented/file \
+  "Code Review 任务：
+  1. 逐条检查实现是否满足 SPEC.md 的验收标准
+  2. 检查代码质量（类型安全、错误处理、命名规范）
+  3. 列出所有问题（如有），标注严重级别
+  4. 如果没有问题，输出 PASS"
+```
+
+#### 工作流
+
+```
+1. pi -p --no-session @SPEC @ticket "实现这个 ticket"
+2. 跑测试
+3. ✅ 测试通过 → 开独立的 pi（新上下文）跑 Code Review
+4.   ├─ Review PASS → git commit
+5.   └─ Review FAIL → 回到步骤 1 重试（最多 3 次）
+6. ❌ 测试失败 → 回到步骤 1 重试（最多 3 次）
+```
+
+#### 审核标准
+
+| 维度 | 检查项 |
+|------|--------|
+| 功能 | 是否满足 SPEC 中该 ticket 的验收标准 |
+| 类型安全 | 类型定义正确，无 any 滥用 |
+| 错误处理 | 边界情况有处理，错误信息有意义 |
+| 命名规范 | 命名清晰，符合项目约定 |
+| 代码风格 | 无死代码、无 console.log 遗留、无 TODO |
+
+全部 ticket 完成后，通知你回来整体验收。
 
 ### 手动模式的备选
 

@@ -238,10 +238,10 @@ AI 追问你的需求细节，直到想清楚。
 AI 把项目拆成一个个可执行的 Ticket 文件。
 
 ### Phase 3: Auto-Implement
-自动循环：找未完成的 Ticket → 实现 → 跑测试 → 提交 → 下一个。
+自动循环：找未完成的 Ticket → 实现 → 跑测试 → 下一个。
 
-### Phase 4: Re-Grill
-全部完成后叫你回来 review。
+### Phase 4: Code Review
+每次实现后自动跑 Code Review（独立审核，对比 Spec 和代码标准），审核通过才 commit。
 SKILL
         log "matt-flow Skill 模板已创建"
     fi
@@ -297,6 +297,42 @@ def has_commit(num):
                        capture_output=True, text=True)
     return bool(r.stdout.strip())
 
+def code_review(ticket_path, num, name):
+    """在独立上下文中运行 Code Review，返回 True 表示通过。"""
+    log(f"  🔍 Code Review ticket-{num}...")
+    # 收集改动的文件列表
+    r = subprocess.run(["git", "diff", "--name-only", "--cached"],
+                       capture_output=True, text=True)
+    changed_files = r.stdout.strip() or "无暂存文件，检查工作区改动"
+    
+    review_prompt = (
+        f"Code Review 任务：ticket-{num} {name}\n\n"
+        f"改动的文件：\n{changed_files}\n\n"
+        f"请逐项检查：\n"
+        f"1. 实现是否满足 SPEC.md 中该 ticket 的验收标准\n"
+        f"2. 代码质量（类型安全、错误处理、命名规范）\n"
+        f"3. 边界情况和错误处理是否完善\n"
+        f"4. 无死代码、无 console.log 遗留、无 TODO\n\n"
+        f"如果有问题，列出每条问题的位置和严重级别（🔴 阻塞 / 🟡 次要）。\n"
+        f"如果全部通过，输出：PASS"
+    )
+    
+    r = subprocess.run(
+        ["pi", "-p", "--no-session", str(SPEC), str(ticket_path)],
+        input=review_prompt, capture_output=True, text=True, timeout=300
+    )
+    output = (r.stdout or "") + (r.stderr or "")
+    
+    if "PASS" in output and "🔴" not in output:
+        log(f"  ✅ Code Review 通过")
+        return True
+    else:
+        # 提取 review 摘要
+        lines = output.strip().split("\n")
+        review_summary = "\n".join(lines[-5:])
+        log(f"  ⚠ Code Review 发现问题：\n{review_summary}")
+        return False
+
 for f in sorted(TICKETS.iterdir()):
     m = ticket_re.match(f.name)
     if not m:
@@ -312,16 +348,26 @@ for f in sorted(TICKETS.iterdir()):
                             str(SPEC), str(f), "实现这个 ticket"],
                            capture_output=True, text=True, timeout=600)
         if r.returncode != 0:
-            log(f"  ⚠ 失败，{r.stderr[-200:] if r.stderr else ''}")
+            log(f"  ⚠ 实现失败，{r.stderr[-200:] if r.stderr else ''}")
             time.sleep(5)
             continue
+        
         r = subprocess.run(["python3", "-m", "pytest", "-x", "-q"],
                            capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             log(f"  ⚠ 测试失败，重试")
             time.sleep(5)
             continue
+        
         subprocess.run(["git", "add", "-A"])
+        
+        # Code Review：用独立的 pi 调用，新上下文
+        if not code_review(f, num, name):
+            log(f"  ⚠ Code Review 未通过，重试")
+            subprocess.run(["git", "reset", "HEAD"])
+            time.sleep(5)
+            continue
+        
         subprocess.run(["git", "commit", "-m", f"ticket-{num}: {name}"])
         log(f"  ✅ ticket-{num} 完成")
         break
