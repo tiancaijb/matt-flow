@@ -31,3 +31,8 @@ jobs:
 
       - name: auto-develop.py --status .
         run: python3 scripts/auto-develop.py --status .
+
+      - name: Run tests
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest tests/ -v
